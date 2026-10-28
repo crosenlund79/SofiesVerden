@@ -1,0 +1,122 @@
+@page "/historik"
+@implements IDisposable
+@inject AppState State
+
+<PageTitle>Historik</PageTitle>
+<PageHeader Title="Historik" BackHref="overblik" />
+
+<div class="content">
+    @if (_all.Count == 0)
+    {
+        <EmptyState Art="🕰️" Title="Ingen historik endnu">
+            <p>Alt, hvad du registrerer, samles her i tidsrækkefølge.</p>
+        </EmptyState>
+    }
+    else
+    {
+        <div class="searchbar">
+            <label class="visually-hidden" for="search">Søg i historikken</label>
+            <input id="search" class="input" type="search" placeholder="Søg…" value="@_search" @oninput="e => { _search = e.Value?.ToString() ?? string.Empty; _limit = PageSize; }" />
+        </div>
+        <div class="filters" role="group" aria-label="Vis typer">
+            <button class="chip" aria-pressed="@(_kinds.Count == 0 ? "true" : "false")" @onclick="() => { _kinds.Clear(); _limit = PageSize; }">Alt</button>
+            @foreach (var (kind, label) in Kinds)
+            {
+                <button class="chip" aria-pressed="@(_kinds.Contains(kind) ? "true" : "false")" @onclick="() => ToggleKind(kind)">@label</button>
+            }
+        </div>
+        <div class="row">
+            <div class="grow">
+                <label class="label small" for="from">Fra</label>
+                <input id="from" class="input" type="date" value="@_from?.ToString("yyyy-MM-dd")" @onchange="e => { _from = DateOnly.TryParse(e.Value?.ToString(), out var d) ? d : null; _limit = PageSize; }" />
+            </div>
+            <div class="grow">
+                <label class="label small" for="to">Til</label>
+                <input id="to" class="input" type="date" value="@_to?.ToString("yyyy-MM-dd")" @onchange="e => { _to = DateOnly.TryParse(e.Value?.ToString(), out var d) ? d : null; _limit = PageSize; }" />
+            </div>
+        </div>
+
+        var filtered = History.Filter(_all, new HistoryFilter { Kinds = _kinds, From = _from, To = _to, Search = _search });
+        <p class="small muted mt" aria-live="polite">@Dk.Count(filtered.Count, "registrering", "registreringer")</p>
+        <ul class="list">
+            @foreach (var e in filtered.Take(_limit))
+            {
+                <li>
+                    <a class="list-item" href="@Link(e)">
+                        <span class="ico" aria-hidden="true">@Icon(e.Kind)</span>
+                        <span class="main">
+                            <span class="title">@e.Title</span>
+                            <span class="sub" style="display:block">@Dk.Date(e.Date)@(string.IsNullOrEmpty(e.Detail) ? "" : " · " + e.Detail)</span>
+                        </span>
+                        <span class="end">
+                            @if (e.Amount is { } a)
+                            {
+                                <span class="amount">@(e.Kind == HistoryKind.Expense ? "−" : "")@Dk.Money(a)</span>
+                            }
+                            else if (e.Km is { } km)
+                            {
+                                <span class="amount">@Dk.Km(km)</span>
+                            }
+                        </span>
+                    </a>
+                </li>
+            }
+        </ul>
+        @if (filtered.Count > _limit)
+        {
+            <button class="btn btn-secondary btn-block" @onclick="() => _limit += PageSize">Vis flere</button>
+        }
+    }
+</div>
+
+@code {
+    private const int PageSize = 100;
+    private static readonly (HistoryKind Kind, string Label)[] Kinds =
+        [(HistoryKind.Session, "Sessioner"), (HistoryKind.Payment, "Betalinger"), (HistoryKind.Expense, "Udgifter"), (HistoryKind.Trip, "Kørsel")];
+
+    private IReadOnlyList<HistoryEntry> _all = [];
+    private readonly HashSet<HistoryKind> _kinds = [];
+    private string _search = "";
+    private DateOnly? _from;
+    private DateOnly? _to;
+    private int _limit = PageSize;
+
+    protected override void OnInitialized()
+    {
+        _all = History.Build(State.Ledger.Data);
+        State.Changed += OnChanged;
+    }
+
+    private void ToggleKind(HistoryKind kind)
+    {
+        if (!_kinds.Remove(kind))
+        {
+            _kinds.Add(kind);
+        }
+
+        _limit = PageSize;
+    }
+
+    private static string Icon(HistoryKind kind) => kind switch
+    {
+        HistoryKind.Session => "✨",
+        HistoryKind.Payment => "💳",
+        HistoryKind.Expense => "🧾",
+        _ => "🚗",
+    };
+
+    private static string Link(HistoryEntry e) => e.Kind switch
+    {
+        HistoryKind.Session or HistoryKind.Payment => $"session/{e.SessionId}?retur=historik",
+        HistoryKind.Expense => $"udgift/{e.RecordId}?retur=historik",
+        _ => $"koersel/{e.RecordId}?retur=historik",
+    };
+
+    private void OnChanged()
+    {
+        _all = History.Build(State.Ledger.Data);
+        InvokeAsync(StateHasChanged);
+    }
+
+    public void Dispose() => State.Changed -= OnChanged;
+}

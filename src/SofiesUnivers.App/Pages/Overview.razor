@@ -1,0 +1,163 @@
+@page "/overblik"
+@using SofiesUnivers.Core.Backup
+@using SofiesUnivers.Core.Excel
+@implements IDisposable
+@inject AppState State
+
+<PageTitle>Overblik</PageTitle>
+<PageHeader Title="Overblik" />
+
+<div class="content">
+    <div class="yearpicker" role="group" aria-label="Vælg år">
+        <button class="icon-btn" aria-label="Forrige år" disabled="@(_years.IndexOf(_year) >= _years.Count - 1)" @onclick="() => Move(1)">‹</button>
+        <span class="year" aria-live="polite">@_year</span>
+        <button class="icon-btn" aria-label="Næste år" disabled="@(_years.IndexOf(_year) <= 0)" @onclick="() => Move(-1)">›</button>
+    </div>
+
+    @if (!State.Ledger.Data.HasBusinessRecords)
+    {
+        <EmptyState Art="📊" Title="Her kommer dit overblik">
+            <p>Når du har registreret sessioner og udgifter, kan du se årets tal her og lave regneark til din revisor.</p>
+        </EmptyState>
+    }
+    else
+    {
+        <div class="stat-grid">
+            <div class="stat"><div class="k">Sessioner</div><div class="v">@_summary.SessionCount</div><div class="s">@Dk.Number(_summary.TotalMinutes / 60m) timer</div></div>
+            <div class="stat"><div class="k">Sessionsværdi</div><div class="v">@Dk.Money(_summary.SessionValue)</div><div class="s">efter sessionsdato</div></div>
+            <div class="stat"><div class="k">Modtaget</div><div class="v">@Dk.Money(_summary.PaymentsReceived)</div><div class="s">efter betalingsdato</div></div>
+            <div class="stat"><div class="k">Udestående</div><div class="v">@Dk.Money(_summary.OutstandingOnYearSessions)</div><div class="s">på årets sessioner</div></div>
+            <div class="stat"><div class="k">Udgifter</div><div class="v">@Dk.Money(_summary.ExpensesTotal)</div><div class="s">@Dk.Count(_summary.ExpenseCount, "udgift", "udgifter")</div></div>
+            <div class="stat"><div class="k">Kørsel</div><div class="v">@Dk.Km(_summary.DrivingKm)</div><div class="s">heraf @Dk.Km(_summary.DrivingKmInTaxReport) i skatteoversigt</div></div>
+        </div>
+
+        <section class="card mt" aria-labelledby="months-heading">
+            <h2 id="months-heading">Modtagne betalinger pr. måned</h2>
+            @{
+                var max = Math.Max(1m, _summary.Months.Max(m => m.PaymentsReceived));
+            }
+            <div class="bars" aria-hidden="true">
+                @foreach (var m in _summary.Months)
+                {
+                    <div class="bar" title="@Dk.MonthName(m.Month): @Dk.Money(m.PaymentsReceived)">
+                        <div class="fill" style="height:@((int)(m.PaymentsReceived / max * 100))%"></div>
+                    </div>
+                }
+            </div>
+            <div class="bars-labels" aria-hidden="true">
+                @foreach (var m in _summary.Months)
+                {
+                    <span>@Dk.MonthShortName(m.Month).TrimEnd('.')</span>
+                }
+            </div>
+            <details class="mt">
+                <summary>Vis tallene pr. måned</summary>
+                <table class="small" style="width:100%;border-collapse:collapse;margin-top:.5rem">
+                    <thead><tr><th style="text-align:left">Måned</th><th style="text-align:right">Sessioner</th><th style="text-align:right">Modtaget</th><th style="text-align:right">Udgifter</th></tr></thead>
+                    <tbody>
+                        @foreach (var m in _summary.Months)
+                        {
+                            <tr><td>@Dk.Capitalize(Dk.MonthName(m.Month))</td><td class="num" style="text-align:right">@Dk.Money(m.SessionValue)</td><td class="num" style="text-align:right">@Dk.Money(m.PaymentsReceived)</td><td class="num" style="text-align:right">@Dk.Money(m.Expenses)</td></tr>
+                        }
+                    </tbody>
+                </table>
+            </details>
+        </section>
+
+        @if (_summary.ExpensesByCategory.Count > 0)
+        {
+            <section class="card mt" aria-labelledby="cat-heading">
+                <h2 id="cat-heading">Udgifter pr. kategori</h2>
+                @{
+                    var maxCat = Math.Max(1m, _summary.ExpensesByCategory.Max(c => c.Amount));
+                }
+                @foreach (var c in _summary.ExpensesByCategory)
+                {
+                    <div class="hbar">
+                        <div class="row"><span>@c.Name</span><span class="num">@Dk.Money(c.Amount)</span></div>
+                        <div class="track" aria-hidden="true"><div class="fill" style="width:@((int)(c.Amount / maxCat * 100))%"></div></div>
+                    </div>
+                }
+            </section>
+        }
+
+        @if (_summary.PaymentsByMethod.Count > 0)
+        {
+            <section class="card mt" aria-labelledby="method-heading">
+                <h2 id="method-heading">Betalinger pr. metode</h2>
+                <dl class="kv">
+                    @foreach (var m in _summary.PaymentsByMethod)
+                    {
+                        <dt>@m.Name (@m.Count)</dt>
+                        <dd>@Dk.Money(m.Amount)</dd>
+                    }
+                </dl>
+            </section>
+        }
+
+        <p class="small muted mt">
+            Sessionsværdi er summen af priserne for årets sessioner. Modtaget er de betalinger, du har fået i året – også for sessioner fra andre år.
+            Tallene er ikke nødvendigvis det samme som skattepligtig omsætning. Spørg din revisor, hvis du er i tvivl.
+        </p>
+    }
+
+    <section class="card mt" aria-labelledby="export-heading">
+        <h2 id="export-heading">Regneark</h2>
+        <div class="stack">
+            <FileExport Label="@($"Skatteoversigt {_year} (uden klientnavne)")" Icon="🧮" Primary="true" TestId="export-tax"
+                        Hint="Materiale til skatteopgørelsen – kan sendes til revisoren. Indeholder ingen kaldenavne."
+                        Create="CreateTaxReport" />
+            <FileExport Label="Komplet regneark (privat)" Icon="📒" TestId="export-private"
+                        Hint="Alle registreringer i alle år, inkl. kaldenavne. Til dig selv."
+                        Create="CreatePrivateWorkbook" />
+        </div>
+    </section>
+
+    <a class="btn btn-secondary btn-block mt" href="historik">🕰️ Se al historik</a>
+</div>
+
+@code {
+    private const string XlsxMime = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+    private List<int> _years = [];
+    private int _year;
+    private YearSummary _summary = default!;
+
+    protected override void OnInitialized()
+    {
+        _year = State.Ledger.Clock.Today.Year;
+        Refresh();
+        State.Changed += OnChanged;
+    }
+
+    private void Refresh()
+    {
+        _years = ReportCalculator.Years(State.Ledger.Data, State.Ledger.Clock.Today.Year).ToList();
+        if (!_years.Contains(_year))
+        {
+            _year = _years[0];
+        }
+
+        _summary = ReportCalculator.ForYear(State.Ledger.Data, _year);
+    }
+
+    private void Move(int delta)
+    {
+        var i = Math.Clamp(_years.IndexOf(_year) + delta, 0, _years.Count - 1);
+        _year = _years[i];
+        Refresh();
+    }
+
+    private (byte[], string, string) CreateTaxReport() =>
+        (TaxReportWorkbook.Build(State.Ledger.Data, _year, DateTimeOffset.UtcNow), TaxReportWorkbook.FileName(_year), XlsxMime);
+
+    private (byte[], string, string) CreatePrivateWorkbook() =>
+        (PrivateWorkbook.Build(State.Ledger.Data, DateTimeOffset.UtcNow), BackupPaths.WorkbookExportFileName(State.Ledger.Clock.Today), XlsxMime);
+
+    private void OnChanged()
+    {
+        Refresh();
+        InvokeAsync(StateHasChanged);
+    }
+
+    public void Dispose() => State.Changed -= OnChanged;
+}

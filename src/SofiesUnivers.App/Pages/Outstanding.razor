@@ -1,0 +1,153 @@
+@page "/udestaaende"
+@implements IDisposable
+@inject AppState State
+@inject ToastService Toasts
+@inject ThemeService Theme
+@inject Prefs Prefs
+
+<PageTitle>Udestående betalinger</PageTitle>
+<PageHeader Title="Udestående" BackHref="" />
+
+<div class="content">
+    @if (_items.Count == 0)
+    {
+        <EmptyState Art="🌞" Title="Alt er betalt">
+            <p>Der er ingen sessioner, der mangler betaling.</p>
+        </EmptyState>
+    }
+    else
+    {
+        <div class="card mb">
+            <div class="row between">
+                <span>@Dk.Count(_items.Count, "session mangler", "sessioner mangler") betaling</span>
+                <strong class="num">@Dk.Money(_items.Sum(i => i.Outstanding))</strong>
+            </div>
+        </div>
+
+        <ul class="list">
+            @foreach (var item in _items)
+            {
+                var s = item.Session;
+                <li class="card" style="margin-bottom:.7rem">
+                    <div class="row between">
+                        <div class="grow">
+                            <div style="font-weight:650">@Elements(s)</div>
+                            <div class="small muted">@Dk.Date(s.Date)@(s.ClientNickname is null ? "" : " · " + s.ClientNickname)</div>
+                        </div>
+                        <span class="badge warn">Mangler @Dk.Money(item.Outstanding)</span>
+                    </div>
+                    <div class="small muted mt">Pris @Dk.Money(s.Price) · betalt @Dk.Money(item.Paid)</div>
+
+                    @if (_openId == s.Id)
+                    {
+                        <div class="pay-row mt">
+                            <div>
+                                <label class="label small" for="amount">Beløb</label>
+                                <MoneyInput Id="amount" Value="_amount" ValueChanged="v => _amount = v" />
+                            </div>
+                            <div>
+                                <label class="label small" for="paydate">Betalt d.</label>
+                                <input id="paydate" class="input" type="date" value="@_date.ToString("yyyy-MM-dd")" @onchange="e => { if (DateOnly.TryParse(e.Value?.ToString(), out var d)) _date = d; }" />
+                            </div>
+                            <div class="full">
+                                <span class="label small" id="method-label">Betalt med</span>
+                                <div class="chips" role="group" aria-labelledby="method-label">
+                                    @foreach (var m in State.Ledger.ActiveLookups(LookupKind.PaymentMethod))
+                                    {
+                                        <button type="button" class="chip" aria-pressed="@(_method == m.Id ? "true" : "false")" @onclick="() => _method = m.Id">@m.Name</button>
+                                    }
+                                </div>
+                            </div>
+                            @foreach (var e in _errors)
+                            {
+                                <div class="full error-text">@e.Message</div>
+                            }
+                            <div class="full row">
+                                <button class="btn btn-primary grow" disabled="@_saving" @onclick="() => SaveAsync(s)">Gem betaling</button>
+                                <button class="btn btn-ghost" @onclick="() => _openId = null">Fortryd</button>
+                            </div>
+                        </div>
+                    }
+                    else
+                    {
+                        <div class="row wrap mt">
+                            <button class="btn btn-primary" @onclick="() => Open(item)">Registrér betaling</button>
+                            <a class="btn btn-ghost" href="@($"session/{s.Id}?retur=udestaaende")">Åbn session</a>
+                        </div>
+                    }
+                </li>
+            }
+        </ul>
+    }
+</div>
+
+@code {
+    private IReadOnlyList<OutstandingSession> _items = [];
+    private Guid? _openId;
+    private decimal? _amount;
+    private DateOnly _date;
+    private Guid _method;
+    private bool _saving;
+    private IReadOnlyList<ValidationError> _errors = [];
+
+    protected override void OnInitialized()
+    {
+        Refresh();
+        State.Changed += OnChanged;
+    }
+
+    private void Refresh() => _items = ReportCalculator.OutstandingSessions(State.Ledger.Data);
+
+    private string Elements(Session s) => string.Join(" + ", s.ElementIds.Select(id => State.Ledger.Data.LookupName(LookupKind.SessionElement, id)));
+
+    private async Task Open(OutstandingSession item)
+    {
+        _openId = item.Session.Id;
+        _amount = item.Outstanding;
+        _date = State.Ledger.Clock.Today;
+        _errors = [];
+        var methods = State.Ledger.ActiveLookups(LookupKind.PaymentMethod);
+        var last = await Prefs.LastPaymentMethodAsync();
+        _method = methods.FirstOrDefault(m => m.Id == last)?.Id ?? methods.FirstOrDefault()?.Id ?? Guid.Empty;
+    }
+
+    private async Task SaveAsync(Session s)
+    {
+        if (_amount is null)
+        {
+            _errors = [new("amount", "Skriv et beløb.")];
+            return;
+        }
+
+        _saving = true;
+        try
+        {
+            var result = await State.Ledger.AddPaymentAsync(s.Id, new PaymentDraft { Date = _date, Amount = _amount.Value, MethodId = _method });
+            if (!result.Ok)
+            {
+                _errors = result.Errors;
+                return;
+            }
+
+            await Prefs.RememberMethodAsync(_method);
+            _openId = null;
+            Toasts.Success($"Betaling på {Dk.Money(_amount.Value)} er registreret. {Theme.SavedMessage()}");
+        }
+        catch (Exception ex)
+        {
+            Toasts.Error("Betalingen kunne ikke gemmes.", [ex.Message]);
+        }
+        finally
+        {
+            _saving = false;
+        }
+    }
+
+    private void OnChanged()
+    {
+        Refresh();
+        InvokeAsync(StateHasChanged);
+    }
+
+    public void Dispose() => State.Changed -= OnChanged;
+}

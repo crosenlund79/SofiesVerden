@@ -1,0 +1,88 @@
+@page "/sessioner"
+@implements IDisposable
+@inject AppState State
+
+<PageTitle>Sessioner</PageTitle>
+<PageHeader Title="Sessioner" />
+
+<div class="content">
+    <a class="btn btn-primary btn-block btn-big" href="session/ny?retur=sessioner"><span aria-hidden="true">＋</span> Ny session</a>
+
+    @if (State.Ledger.Data.Sessions.Count == 0)
+    {
+        <EmptyState Art="✨" Title="Ingen sessioner endnu">
+            <p>Når du registrerer din første session, dukker den op her.</p>
+        </EmptyState>
+    }
+    else
+    {
+        <div class="searchbar mt">
+            <label class="visually-hidden" for="search">Søg i sessioner</label>
+            <input id="search" class="input" type="search" placeholder="Søg (kaldenavn, type, beløb)…" value="@_search" @oninput="e => _search = e.Value?.ToString() ?? string.Empty" />
+        </div>
+        <div class="filters" role="group" aria-label="Vis">
+            <button class="chip" aria-pressed="@(!_onlyOutstanding ? "true" : "false")" @onclick="() => _onlyOutstanding = false">Alle</button>
+            <button class="chip" aria-pressed="@(_onlyOutstanding ? "true" : "false")" @onclick="() => _onlyOutstanding = true">Udestående (@_outstandingCount)</button>
+        </div>
+
+        var groups = Filtered().GroupBy(s => (s.Date.Year, s.Date.Month)).ToList();
+        @if (groups.Count == 0)
+        {
+            <EmptyState Art="🔎" Title="Ingen sessioner passer til søgningen" />
+        }
+        @foreach (var g in groups)
+        {
+            <h2 class="group-title"><span>@Dk.MonthYear(g.Key.Year, g.Key.Month)</span><span class="num">@Dk.Money(g.Sum(s => s.Price))</span></h2>
+            <ul class="list">
+                @foreach (var s in g)
+                {
+                    <li><SessionListItem Session="s" /></li>
+                }
+            </ul>
+        }
+    }
+</div>
+
+@code {
+    private string _search = "";
+    private bool _onlyOutstanding;
+    private int _outstandingCount;
+
+    protected override void OnInitialized()
+    {
+        State.Changed += OnChanged;
+        Count();
+    }
+
+    private void Count() => _outstandingCount = ReportCalculator.OutstandingSessions(State.Ledger.Data).Count;
+
+    private IEnumerable<Session> Filtered()
+    {
+        var data = State.Ledger.Data;
+        var words = (Names.Clean(_search) ?? "").ToUpperInvariant().Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        return data.Sessions
+            .Where(s => !_onlyOutstanding || data.OutstandingFor(s) > 0)
+            .Where(s =>
+            {
+                if (words.Length == 0)
+                {
+                    return true;
+                }
+
+                var text = string.Join(' ', s.ElementIds.Select(id => data.LookupName(LookupKind.SessionElement, id)))
+                           + " " + s.ClientNickname + " " + Dk.Amount(s.Price) + " " + Dk.Date(s.Date);
+                text = text.ToUpperInvariant();
+                return words.All(text.Contains);
+            })
+            .OrderByDescending(s => s.Date)
+            .ThenByDescending(s => s.CreatedAt);
+    }
+
+    private void OnChanged()
+    {
+        Count();
+        InvokeAsync(StateHasChanged);
+    }
+
+    public void Dispose() => State.Changed -= OnChanged;
+}

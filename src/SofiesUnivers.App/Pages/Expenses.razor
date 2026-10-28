@@ -1,0 +1,80 @@
+@page "/udgifter"
+@implements IDisposable
+@inject AppState State
+
+<PageTitle>Udgifter</PageTitle>
+<PageHeader Title="Udgifter" />
+
+<div class="content">
+    <a class="btn btn-primary btn-block btn-big" href="udgift/ny?retur=udgifter"><span aria-hidden="true">＋</span> Ny udgift</a>
+
+    @if (State.Ledger.Data.Expenses.Count == 0)
+    {
+        <EmptyState Art="🧾" Title="Ingen udgifter endnu">
+            <p>Registrér fx materialer, lokaleleje eller udstyr – gerne med et billede af kvitteringen.</p>
+        </EmptyState>
+    }
+    else
+    {
+        <div class="searchbar mt">
+            <label class="visually-hidden" for="search">Søg i udgifter</label>
+            <input id="search" class="input" type="search" placeholder="Søg (kategori, beskrivelse, beløb)…" value="@_search" @oninput="e => _search = e.Value?.ToString() ?? string.Empty" />
+        </div>
+        var groups = Filtered().GroupBy(e => (e.Date.Year, e.Date.Month)).ToList();
+        @if (groups.Count == 0)
+        {
+            <EmptyState Art="🔎" Title="Ingen udgifter passer til søgningen" />
+        }
+        @foreach (var g in groups)
+        {
+            <h2 class="group-title"><span>@Dk.MonthYear(g.Key.Year, g.Key.Month)</span><span class="num">@Dk.Money(g.Sum(e => e.Amount))</span></h2>
+            <ul class="list">
+                @foreach (var e in g)
+                {
+                    <li>
+                        <a class="list-item" href="@($"udgift/{e.Id}?retur=udgifter")">
+                            <span class="ico" aria-hidden="true">🧾</span>
+                            <span class="main">
+                                <span class="title">@State.Ledger.Data.LookupName(LookupKind.ExpenseCategory, e.CategoryId)</span>
+                                <span class="sub" style="display:block">@Dk.DateWithDay(e.Date)@(e.Description is null ? "" : " · " + e.Description)</span>
+                            </span>
+                            <span class="end">
+                                <span class="amount">@Dk.Money(e.Amount)</span><br />
+                                @if (e.Attachment is not null)
+                                {
+                                    <span class="badge info">📎 Kvittering</span>
+                                }
+                                else
+                                {
+                                    <span class="badge off">Ingen kvittering</span>
+                                }
+                            </span>
+                        </a>
+                    </li>
+                }
+            </ul>
+        }
+    }
+</div>
+
+@code {
+    private string _search = "";
+
+    protected override void OnInitialized() => State.Changed += OnChanged;
+
+    private IEnumerable<Expense> Filtered()
+    {
+        var data = State.Ledger.Data;
+        var words = (Names.Clean(_search) ?? "").ToUpperInvariant().Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        return data.Expenses
+            .Where(e => words.Length == 0 || words.All(w =>
+                (data.LookupName(LookupKind.ExpenseCategory, e.CategoryId) + " " + e.Description + " " + Dk.Amount(e.Amount) + " " + Dk.Date(e.Date))
+                .ToUpperInvariant().Contains(w)))
+            .OrderByDescending(e => e.Date)
+            .ThenByDescending(e => e.CreatedAt);
+    }
+
+    private void OnChanged() => InvokeAsync(StateHasChanged);
+
+    public void Dispose() => State.Changed -= OnChanged;
+}

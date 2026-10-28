@@ -1,0 +1,101 @@
+@page "/koersel"
+@implements IDisposable
+@inject AppState State
+@inject ToastService Toasts
+
+<PageTitle>Kørsel</PageTitle>
+<PageHeader Title="Kørsel" />
+
+<div class="content">
+    <a class="btn btn-primary btn-block btn-big" href="koersel/ny?retur=koersel"><span aria-hidden="true">＋</span> Registrér kørsel</a>
+
+    @if (State.Ledger.Data.Settings.ClinicRoute.RoundTripKm is null)
+    {
+        <div class="notice warn mt" role="note">
+            Afstanden mellem hjem og klinik er ikke angivet endnu. <a href="rute">Angiv antal km</a>
+        </div>
+    }
+
+    @if (State.Ledger.Data.Trips.Count == 0)
+    {
+        <EmptyState Art="🚗" Title="Ingen kørsel endnu">
+            <p>Når du registrerer en session, noteres turen til klinikken automatisk. Anden kørsel, fx indkøb eller rengøring, kan du registrere her.</p>
+        </EmptyState>
+    }
+    else
+    {
+        var summary = ReportCalculator.ForYear(State.Ledger.Data, State.Ledger.Clock.Today.Year);
+        <div class="stat-grid mt">
+            <div class="stat"><div class="k">Km i @summary.Year</div><div class="v">@Dk.Km(summary.DrivingKm)</div><div class="s">@Dk.Count(summary.TripCount, "tur", "ture")</div></div>
+            <div class="stat"><div class="k">Heraf i skatteoversigt</div><div class="v">@Dk.Km(summary.DrivingKmInTaxReport)</div><div class="s">@Dk.Count(summary.TripsInTaxReport, "tur", "ture")</div></div>
+        </div>
+        @if (summary.TripsMissingKm > 0)
+        {
+            <div class="notice warn mt">@Dk.Count(summary.TripsMissingKm, "tur mangler", "ture mangler") antal km. <a href="rute">Udfyld</a></div>
+        }
+
+        @foreach (var g in State.Ledger.Data.Trips.OrderByDescending(t => t.Date).ThenByDescending(t => t.CreatedAt).GroupBy(t => (t.Date.Year, t.Date.Month)))
+        {
+            <h2 class="group-title"><span>@Dk.MonthYear(g.Key.Year, g.Key.Month)</span><span class="num">@Dk.Km(g.Sum(t => t.DistanceKm ?? 0m))</span></h2>
+            <ul class="list">
+                @foreach (var t in g)
+                {
+                    <li class="list-item">
+                        <span class="ico" aria-hidden="true">@(t.IsClinicTrip ? "🏡" : "🚗")</span>
+                        <a class="main" href="@($"koersel/{t.Id}?retur=koersel")" style="color:inherit;text-decoration:none">
+                            <span class="title">@t.Purpose</span>
+                            <span class="sub" style="display:block">@Dk.DateWithDay(t.Date) · @t.FromLabel → @t.ToLabel@(t.Origin == TripOrigin.Automatic ? " · automatisk" : "")</span>
+                        </a>
+                        <span class="end">
+                            @if (t.DistanceKm is { } km)
+                            {
+                                <span class="amount">@Dk.Km(km)</span>
+                            }
+                            else
+                            {
+                                <span class="badge warn">Mangler km</span>
+                            }
+                            <br />
+                            <button class="badge @(t.IncludeInTaxReport ? "ok" : "off")" style="border:0;cursor:pointer;min-height:32px;margin-top:.3rem"
+                                    aria-label="@(t.IncludeInTaxReport ? "Medtaget i skatteoversigt. Tryk for at udelade." : "Ikke i skatteoversigt. Tryk for at medtage.")"
+                                    @onclick="() => ToggleTax(t)">
+                                @(t.IncludeInTaxReport ? "I skatteoversigt" : "Ikke i skatteoversigt")
+                            </button>
+                        </span>
+                    </li>
+                }
+            </ul>
+        }
+    }
+</div>
+
+@code {
+    protected override void OnInitialized() => State.Changed += OnChanged;
+
+    private async Task ToggleTax(Trip t)
+    {
+        try
+        {
+            var result = await State.Ledger.SaveTripAsync(new TripDraft
+            {
+                Id = t.Id, Date = t.Date, Purpose = t.Purpose, FromLabel = t.FromLabel, ToLabel = t.ToLabel,
+                DistanceKm = t.DistanceKm, IsClinicTrip = t.IsClinicTrip, IncludeInTaxReport = !t.IncludeInTaxReport,
+            });
+            if (!result.Ok)
+            {
+                Toasts.Error(result.Errors[0].Message);
+                return;
+            }
+
+            Toasts.Info(result.Value!.IncludeInTaxReport ? "Turen er medtaget i skatteoversigten." : "Turen er udeladt af skatteoversigten. Den er stadig gemt.");
+        }
+        catch (Exception ex)
+        {
+            Toasts.Error("Det kunne ikke gemmes.", [ex.Message]);
+        }
+    }
+
+    private void OnChanged() => InvokeAsync(StateHasChanged);
+
+    public void Dispose() => State.Changed -= OnChanged;
+}

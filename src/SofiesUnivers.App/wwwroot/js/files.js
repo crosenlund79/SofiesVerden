@@ -16,7 +16,7 @@ export function canShareFiles() {
 
 // Opens the system share sheet (iPhone: Mail, Gem i Filer, AirDrop …) and falls back to a normal download.
 // Must be called directly from a click so the browser sees a user gesture.
-// Returns "shared", "downloaded", "cancelled" or "failed:<reason>".
+// Returns "shared", "downloaded", "cancelled", "notallowed" or "failed:<reason>".
 export async function shareOrDownload(bytes, fileName, mime, title) {
     const blob = makeBlob(bytes, mime);
     let file = null;
@@ -33,7 +33,10 @@ export async function shareOrDownload(bytes, fileName, mime, title) {
                 return 'shared';
             } catch (e) {
                 if (e && e.name === 'AbortError') return 'cancelled';
-                // NotAllowedError etc.: fall through to download.
+                // The tap was "used up" (e.g. the file took long to prepare). The app then shows a
+                // second button so Sofie can share with a fresh tap.
+                if (e && e.name === 'NotAllowedError') return 'notallowed';
+                // Anything else: fall through to download.
             }
         }
     }

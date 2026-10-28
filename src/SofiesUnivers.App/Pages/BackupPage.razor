@@ -1,0 +1,56 @@
+@page "/backup"
+@implements IDisposable
+@inject AppState State
+
+<PageTitle>Backup</PageTitle>
+<PageHeader Title="Backup" BackHref="indstillinger" ShowSettings="false" />
+
+<div class="content">
+    <section class="card" aria-labelledby="status-heading">
+        <h2 id="status-heading">Status</h2>
+        <dl class="kv small">
+            <dt>Seneste bekræftede backup</dt>
+            <dd>@Stamp(Status.LastConfirmedAt, "Ingen endnu")</dd>
+            <dt>Seneste backup lavet</dt>
+            <dd>@Stamp(Status.LastGeneratedAt, "–")</dd>
+            <dt>Seneste gang delt/hentet</dt>
+            <dd>@Stamp(Status.LastSharedAt, "–")</dd>
+        </dl>
+        @if (BackupReminder.HasUnbackedChanges(Status) && State.Ledger.Data.HasBusinessRecords)
+        {
+            <p class="notice warn small mt" style="margin-bottom:0">Du har ændringer, som ikke er med i en bekræftet backup.</p>
+        }
+        else if (Status.LastConfirmedAt is not null)
+        {
+            <p class="notice ok small mt" style="margin-bottom:0">Alle dine registreringer er med i den seneste bekræftede backup.</p>
+        }
+    </section>
+
+    <section class="card mt" aria-labelledby="make-heading">
+        <h2 id="make-heading">Lav en backup</h2>
+        <p class="small">Backuppen er én ZIP-fil med et regneark over alle registreringer, alle kvitteringer og det, appen skal bruge for at kunne gendanne alt. Lav en om ugen – og gem den uden for telefonen.</p>
+        <BackupCreator />
+    </section>
+
+    <section class="card mt" aria-labelledby="restore-heading">
+        <h2 id="restore-heading">Gendan fra backup</h2>
+        <p class="small">Har du fået ny telefon, eller er data forsvundet? Så kan du hente alt tilbage fra en backup-fil.</p>
+        <a class="btn btn-secondary btn-block" href="gendan">Gendan fra en backup…</a>
+    </section>
+
+    <p class="small muted mt">
+        Vigtigt: Data i appen ligger kun på denne telefon. Hvis appen slettes, webstedsdata ryddes i Safari, eller telefonen går tabt, er backuppen den eneste kopi.
+    </p>
+</div>
+
+@code {
+    private BackupStatus Status => State.Ledger.BackupStatus;
+
+    protected override void OnInitialized() => State.Changed += OnChanged;
+
+    private static string Stamp(DateTimeOffset? t, string empty) => t is { } v ? Dk.Timestamp(v) : empty;
+
+    private void OnChanged() => InvokeAsync(StateHasChanged);
+
+    public void Dispose() => State.Changed -= OnChanged;
+}

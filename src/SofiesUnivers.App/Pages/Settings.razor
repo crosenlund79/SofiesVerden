@@ -1,0 +1,103 @@
+@page "/indstillinger"
+@inject AppState State
+@inject IndexedDbStore Store
+@inject ToastService Toasts
+
+<PageTitle>Indstillinger</PageTitle>
+<PageHeader Title="Indstillinger" BackHref="" ShowSettings="false" />
+
+<div class="content">
+    <ul class="list">
+        <li>
+            <a class="list-item" href="backup">
+                <span class="ico" aria-hidden="true">💾</span>
+                <span class="main"><span class="title">Backup og gendannelse</span><span class="sub" style="display:block">@BackupLine</span></span>
+                <span aria-hidden="true">›</span>
+            </a>
+        </li>
+        <li>
+            <a class="list-item" href="overblik">
+                <span class="ico" aria-hidden="true">📒</span>
+                <span class="main"><span class="title">Regneark til revisor</span><span class="sub" style="display:block">Skatteoversigt og komplet regneark</span></span>
+                <span aria-hidden="true">›</span>
+            </a>
+        </li>
+        <li>
+            <a class="list-item" href="rute">
+                <span class="ico" aria-hidden="true">🚗</span>
+                <span class="main"><span class="title">Rute til klinikken</span><span class="sub" style="display:block">@RouteLine</span></span>
+                <span aria-hidden="true">›</span>
+            </a>
+        </li>
+        <li>
+            <a class="list-item" href="lister">
+                <span class="ico" aria-hidden="true">🏷️</span>
+                <span class="main"><span class="title">Sessionstyper, kategorier og betalingsmetoder</span><span class="sub" style="display:block">Omdøb eller skjul</span></span>
+                <span aria-hidden="true">›</span>
+            </a>
+        </li>
+        <li>
+            <a class="list-item" href="hjaelp">
+                <span class="ico" aria-hidden="true">💡</span>
+                <span class="main"><span class="title">Hjælp</span><span class="sub" style="display:block">Sådan bruger du appen</span></span>
+                <span aria-hidden="true">›</span>
+            </a>
+        </li>
+        <li>
+            <a class="list-item" href="systemtjek">
+                <span class="ico" aria-hidden="true">🩺</span>
+                <span class="main"><span class="title">Systemtjek</span><span class="sub" style="display:block">Tjek at telefonen kan alt det, appen bruger</span></span>
+                <span aria-hidden="true">›</span>
+            </a>
+        </li>
+    </ul>
+
+    <div class="mt">
+        <ThemePicker />
+    </div>
+
+    <section class="card mt" aria-labelledby="storage-heading">
+        <h2 id="storage-heading">Om dine data</h2>
+        <p class="small">
+            Alt gemmes kun her på telefonen, i browserens lager. Intet sendes til en server.
+            Sletter du appen eller webstedsdata i Safari, forsvinder data – derfor er backup vigtig.
+        </p>
+        <dl class="kv small">
+            <dt>Vedvarende lager</dt><dd>@(_storage.Persisted switch { true => "Ja", false => "Ikke garanteret", _ => "Ukendt" })</dd>
+            <dt>Brugt plads</dt><dd>@(_storage.Usage is { } u ? Dk.Number(u / 1024m / 1024m) + " MB" : "Ukendt")</dd>
+            <dt>App-version</dt><dd>@AppState.AppVersion</dd>
+        </dl>
+        @if (_storage.Persisted != true && _storage.PersistSupported)
+        {
+            <button class="btn btn-secondary btn-block mt" @onclick="RequestPersist">Bed browseren om at passe ekstra på data</button>
+        }
+    </section>
+</div>
+
+@code {
+    private StorageInfo _storage = new();
+
+    private string BackupLine => State.Ledger.BackupStatus.LastConfirmedAt is { } c
+        ? $"Seneste bekræftede backup: {Dk.Date(DateOnly.FromDateTime(c.LocalDateTime))}"
+        : "Ingen bekræftet backup endnu";
+
+    private string RouteLine => State.Ledger.Data.Settings.ClinicRoute.RoundTripKm is { } km
+        ? $"Tur/retur {Dk.Km(km)}"
+        : "Antal km er ikke angivet";
+
+    protected override async Task OnInitializedAsync() => _storage = await Store.GetStorageInfoAsync();
+
+    private async Task RequestPersist()
+    {
+        var granted = await Store.RequestPersistenceAsync();
+        _storage = await Store.GetStorageInfoAsync();
+        if (granted)
+        {
+            Toasts.Success("Browseren har lovet at passe på dine data.");
+        }
+        else
+        {
+            Toasts.Info("Browseren gav ikke et løfte. Det er helt normalt – husk bare din ugentlige backup.");
+        }
+    }
+}

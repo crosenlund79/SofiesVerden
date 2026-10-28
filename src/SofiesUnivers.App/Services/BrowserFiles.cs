@@ -7,6 +7,9 @@ public enum ShareOutcome
     Shared,
     Downloaded,
     Cancelled,
+
+    /// <summary>The browser needs a fresh tap before it opens the share sheet.</summary>
+    NeedsTap,
     Failed,
 }
 
@@ -30,12 +33,25 @@ public sealed class BrowserFiles(IJSRuntime js) : IAsyncDisposable
                 "shared" => (ShareOutcome.Shared, null),
                 "downloaded" => (ShareOutcome.Downloaded, null),
                 "cancelled" => (ShareOutcome.Cancelled, null),
+                "notallowed" => (ShareOutcome.NeedsTap, null),
                 _ => (ShareOutcome.Failed, result.StartsWith("failed:", StringComparison.Ordinal) ? result[7..] : result),
             };
         }
         catch (JSException ex)
         {
             return (ShareOutcome.Failed, ex.Message);
+        }
+    }
+
+    /// <summary>Loads the JS module ahead of time, so a later tap reaches the share sheet without delay.</summary>
+    public async Task WarmUpAsync()
+    {
+        try
+        {
+            await ModuleAsync();
+        }
+        catch (JSException)
+        {
         }
     }
 

@@ -1,0 +1,125 @@
+@page "/lister"
+@implements IDisposable
+@inject AppState State
+@inject ToastService Toasts
+
+<PageTitle>Lister</PageTitle>
+<PageHeader Title="Typer og kategorier" BackHref="indstillinger" ShowSettings="false" />
+
+<div class="content">
+    <div class="filters" role="tablist" aria-label="Lister">
+        @foreach (var (kind, label) in Kinds)
+        {
+            <button class="chip" role="tab" aria-selected="@(_kind == kind ? "true" : "false")" aria-pressed="@(_kind == kind ? "true" : "false")" @onclick="() => Select(kind)">@label</button>
+        }
+    </div>
+
+    <p class="small muted">@Help</p>
+
+    <ul class="list">
+        @foreach (var item in State.Ledger.Data.Lookups(_kind).OrderBy(i => i.IsArchived).ThenBy(i => i.SortOrder))
+        {
+            var usage = State.Ledger.UsageCount(_kind, item.Id);
+            <li class="list-item" style="flex-wrap:wrap">
+                @if (_editing == item.Id)
+                {
+                    <label class="visually-hidden" for="rename">Nyt navn</label>
+                    <input id="rename" class="input grow" maxlength="@Names.MaxLookupLength" value="@_name" @oninput="e => _name = e.Value?.ToString() ?? string.Empty" />
+                    <div class="row" style="width:100%;justify-content:flex-end">
+                        <button class="btn btn-ghost" @onclick="() => _editing = null">Fortryd</button>
+                        <button class="btn btn-primary" @onclick="() => RenameAsync(item)">Gem navn</button>
+                    </div>
+                }
+                else
+                {
+                    <span class="main">
+                        <span class="title">@item.Name</span>
+                        <span class="sub" style="display:block">Brugt @Dk.Count(usage, "gang", "gange")@(item.IsArchived ? " · skjult i valglisterne" : "")</span>
+                    </span>
+                    <button class="btn btn-ghost" @onclick="() => StartRename(item)">Omdøb</button>
+                    <button class="btn btn-ghost" @onclick="() => ToggleArchived(item)">@(item.IsArchived ? "Vis igen" : "Skjul")</button>
+                }
+            </li>
+        }
+    </ul>
+
+    <div class="card mt">
+        <label class="label" for="new">Tilføj ny</label>
+        <div class="row">
+            <input id="new" class="input grow" maxlength="@Names.MaxLookupLength" value="@_new" @oninput="e => _new = e.Value?.ToString() ?? string.Empty" />
+            <button class="btn btn-primary" disabled="@(Names.Clean(_new) is null)" @onclick="AddAsync">Tilføj</button>
+        </div>
+    </div>
+</div>
+
+@code {
+    private static readonly (LookupKind Kind, string Label)[] Kinds =
+        [(LookupKind.SessionElement, "Sessionstyper"), (LookupKind.ExpenseCategory, "Udgiftskategorier"), (LookupKind.PaymentMethod, "Betalingsmetoder")];
+
+    private LookupKind _kind = LookupKind.SessionElement;
+    private Guid? _editing;
+    private string _name = "";
+    private string _new = "";
+
+    private string Help => _kind switch
+    {
+        LookupKind.SessionElement => "Det, en session kan indeholde. Et nyt navn kan også tilføjes direkte, når du registrerer en session.",
+        LookupKind.ExpenseCategory => "Kategorier til udgifter. En ny kategori kan også tilføjes direkte fra udgiftsformularen.",
+        _ => "Måder, du kan få betaling på.",
+    } + " Omdøbes en værdi, ændres navnet også på tidligere registreringer. Skjulte værdier bevares i historikken.";
+
+    protected override void OnInitialized() => State.Changed += OnChanged;
+
+    private void Select(LookupKind kind)
+    {
+        _kind = kind;
+        _editing = null;
+    }
+
+    private void StartRename(LookupItem item)
+    {
+        _editing = item.Id;
+        _name = item.Name;
+    }
+
+    private async Task RenameAsync(LookupItem item)
+    {
+        var result = await State.Ledger.RenameLookupAsync(_kind, item.Id, _name);
+        if (!result.Ok)
+        {
+            Toasts.Error(result.Errors[0].Message);
+            return;
+        }
+
+        _editing = null;
+        Toasts.Success("Navnet er ændret.");
+    }
+
+    private async Task ToggleArchived(LookupItem item)
+    {
+        if (!item.IsArchived && State.Ledger.ActiveLookups(_kind).Count <= 1)
+        {
+            Toasts.Error("Der skal være mindst én synlig værdi.");
+            return;
+        }
+
+        await State.Ledger.SetLookupArchivedAsync(_kind, item.Id, !item.IsArchived);
+    }
+
+    private async Task AddAsync()
+    {
+        var result = await State.Ledger.AddLookupAsync(_kind, _new);
+        if (!result.Ok)
+        {
+            Toasts.Error(result.Errors[0].Message);
+            return;
+        }
+
+        _new = "";
+        Toasts.Success($"“{result.Value!.Name}” er klar til brug.");
+    }
+
+    private void OnChanged() => InvokeAsync(StateHasChanged);
+
+    public void Dispose() => State.Changed -= OnChanged;
+}

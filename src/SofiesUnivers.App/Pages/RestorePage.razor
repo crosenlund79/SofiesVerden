@@ -1,0 +1,212 @@
+@page "/gendan"
+@using SofiesUnivers.Core.Backup
+@using SofiesUnivers.Core.Excel
+@inject AppState State
+@inject NavigationManager Nav
+@inject ToastService Toasts
+
+<PageTitle>Gendan</PageTitle>
+<PageHeader Title="Gendan fra backup" BackHref="backup" ShowSettings="false" />
+
+<div class="content">
+    @if (_incoming is null)
+    {
+        <section class="card">
+            <h2>1. Vælg backup-filen</h2>
+            <p class="small">Vælg en <strong>Sofie-Backup-….zip</strong> (anbefalet – indeholder kvitteringerne) eller et komplet regneark <strong>Sofies-Regnskab….xlsx</strong> fra appen.</p>
+            <label class="btn btn-primary btn-block file-label" data-testid="pick-backup">
+                @(_reading ? "Læser og kontrollerer…" : "Vælg fil…")
+                <InputFile OnChange="ReadAsync" accept=".zip,.xlsx,application/zip,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" disabled="@_reading" />
+            </label>
+            <p class="small muted mt">Filen bliver kun kontrolleret. Intet bliver ændret, før du selv bekræfter.</p>
+        </section>
+
+        @if (_errors.Count > 0)
+        {
+            <div class="error-summary mt" role="alert" data-testid="restore-errors">
+                <strong>Filen kan ikke bruges til gendannelse:</strong>
+                <ul>
+                    @foreach (var e in _errors)
+                    {
+                        <li>@e</li>
+                    }
+                </ul>
+                <p class="small" style="margin:.5rem 0 0">Dine nuværende data er ikke ændret.</p>
+            </div>
+        }
+    }
+    else
+    {
+        <section class="card" data-testid="restore-summary">
+            <h2>2. Kontrollér indholdet</h2>
+            <p class="small">@_sourceDescription</p>
+            <table class="small" style="width:100%;border-collapse:collapse">
+                <thead><tr><th style="text-align:left"></th><th style="text-align:right">Nu i appen</th><th style="text-align:right">I filen</th></tr></thead>
+                <tbody>
+                    @foreach (var (label, now, incoming) in Rows())
+                    {
+                        <tr><td>@label</td><td class="num" style="text-align:right">@now</td><td class="num" style="text-align:right"><strong>@incoming</strong></td></tr>
+                    }
+                </tbody>
+            </table>
+            @foreach (var w in _warnings)
+            {
+                <div class="notice warn small mt">@w</div>
+            }
+        </section>
+
+        <section class="card mt">
+            <h2>3. Lav en sikkerhedsbackup først <span class="opt small">(anbefalet)</span></h2>
+            <p class="small">Så kan du komme tilbage til dine nuværende data, hvis du fortryder.</p>
+            <BackupCreator CreateLabel="Lav sikkerhedsbackup af nuværende data" ShowConfirm="false" />
+        </section>
+
+        <section class="card mt">
+            <h2>4. Erstat alle data</h2>
+            <div class="notice danger">
+                <strong>Alle nuværende data bliver erstattet</strong> af indholdet i filen. Registreringer, der kun findes i appen nu, forsvinder. Det er ikke en sammenfletning.
+            </div>
+            <label class="row" style="align-items:flex-start;gap:.6rem;cursor:pointer">
+                <input type="checkbox" style="width:24px;height:24px;flex:none;margin-top:2px" checked="@_understood" @onchange="e => _understood = e.Value is true" data-testid="restore-understood" />
+                <span>Jeg forstår, at mine nuværende data bliver erstattet.</span>
+            </label>
+            <button class="btn btn-danger-solid btn-block btn-big mt" disabled="@(!_understood || _restoring)" @onclick="() => _confirm = true" data-testid="restore-start">Erstat alle data med filens indhold</button>
+            <button class="btn btn-ghost btn-block mt" @onclick="Reset">Vælg en anden fil</button>
+        </section>
+    }
+</div>
+
+<ConfirmDialog Visible="_confirm" Title="Erstat alle data?" ConfirmText="Ja, erstat alle data" Danger="true" Busy="_restoring"
+               OnConfirm="RestoreAsync" OnCancel="() => _confirm = false">
+    <p>Dette er sidste trin. Appens data bliver erstattet med indholdet af <strong>@_fileName</strong>.</p>
+    @if (_restoring)
+    {
+        <p role="status">Gendanner… luk ikke appen.</p>
+    }
+</ConfirmDialog>
+
+@code {
+    private bool _reading;
+    private bool _restoring;
+    private bool _understood;
+    private bool _confirm;
+    private string _fileName = "";
+    private string _sourceDescription = "";
+    private List<string> _errors = [];
+    private List<string> _warnings = [];
+    private AppData? _incoming;
+    private IReadOnlyList<AttachmentBlob> _attachments = [];
+    private DateTimeOffset _createdAt;
+
+    private async Task ReadAsync(InputFileChangeEventArgs e)
+    {
+        _errors = [];
+        _warnings = [];
+        _reading = true;
+        StateHasChanged();
+        try
+        {
+            if (e.File.Size > BackupReader.MaxTotalBytes)
+            {
+                _errors = ["Filen er for stor."];
+                return;
+            }
+
+            using var stream = e.File.OpenReadStream(BackupReader.MaxTotalBytes);
+            using var ms = new MemoryStream();
+            await stream.CopyToAsync(ms);
+            var bytes = ms.ToArray();
+            _fileName = e.File.Name;
+
+            if (e.File.Name.EndsWith(".xlsx", StringComparison.OrdinalIgnoreCase))
+            {
+                var result = WorkbookImporter.Import(bytes);
+                if (!result.Ok)
+                {
+                    _errors = result.Errors.ToList();
+                    return;
+                }
+
+                _incoming = result.Data;
+                _attachments = [];
+                _createdAt = result.ExportedAt ?? DateTimeOffset.UtcNow;
+                _warnings = ["Et regneark indeholder ikke kvitteringer. Brug en ZIP-backup, hvis du vil have kvitteringerne med.", .. result.Warnings];
+                _sourceDescription = $"Regneark eksporteret {Dk.Timestamp(_createdAt)}.";
+            }
+            else
+            {
+                var result = BackupReader.Read(bytes);
+                if (!result.Ok)
+                {
+                    _errors = result.Errors.ToList();
+                    return;
+                }
+
+                _incoming = result.Data;
+                _attachments = result.Attachments;
+                _createdAt = result.Info!.CreatedAt;
+                _warnings = result.Warnings.ToList();
+                _sourceDescription = $"Backup lavet {Dk.Timestamp(_createdAt)} med app-version {result.Info.AppVersion}. Alle kontrolsummer passer.";
+            }
+        }
+        catch (Exception ex)
+        {
+            _errors = ["Filen kunne ikke læses: " + ex.Message];
+        }
+        finally
+        {
+            _reading = false;
+        }
+    }
+
+    private IEnumerable<(string Label, int Now, int Incoming)> Rows()
+    {
+        var a = State.Ledger.Data;
+        var b = _incoming!;
+        yield return ("Sessioner", a.Sessions.Count, b.Sessions.Count);
+        yield return ("Betalinger", a.Payments.Count, b.Payments.Count);
+        yield return ("Udgifter", a.Expenses.Count, b.Expenses.Count);
+        yield return ("Kvitteringer", a.Expenses.Count(e => e.Attachment is not null), _attachments.Count);
+        yield return ("Kørsler", a.Trips.Count, b.Trips.Count);
+        yield return ("Sessionstyper", a.ElementTypes.Count, b.ElementTypes.Count);
+        yield return ("Udgiftskategorier", a.ExpenseCategories.Count, b.ExpenseCategories.Count);
+        yield return ("Betalingsmetoder", a.PaymentMethods.Count, b.PaymentMethods.Count);
+    }
+
+    private void Reset()
+    {
+        _incoming = null;
+        _attachments = [];
+        _understood = false;
+        _errors = [];
+        _warnings = [];
+    }
+
+    private async Task RestoreAsync()
+    {
+        _restoring = true;
+        StateHasChanged();
+        try
+        {
+            await State.Ledger.ReplaceAllAsync(_incoming!, _attachments, _createdAt);
+            _confirm = false;
+            Toasts.Success("Gendannelsen lykkedes. Alle data er hentet fra filen. 🌈");
+            Nav.NavigateTo("");
+        }
+        catch (InvalidDataException ex)
+        {
+            _confirm = false;
+            Reset();
+            _errors = ex.Message.Split(Environment.NewLine).ToList();
+        }
+        catch (Exception ex)
+        {
+            _confirm = false;
+            Toasts.Error("Gendannelsen mislykkedes. Dine nuværende data er ikke ændret.", [ex.Message]);
+        }
+        finally
+        {
+            _restoring = false;
+        }
+    }
+}

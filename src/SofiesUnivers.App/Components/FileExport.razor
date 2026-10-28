@@ -1,0 +1,83 @@
+@* A button that creates a file and opens the share sheet (iPhone) or downloads it (computer). *@
+@inject BrowserFiles Files
+@inject ToastService Toasts
+
+<div class="file-export">
+    @if (_ready is null)
+    {
+        <button type="button" class="btn @(Primary ? "btn-primary" : "btn-secondary") btn-block" disabled="@_busy" @onclick="CreateAndShare" data-testid="@TestId">
+            <span aria-hidden="true">@Icon</span> @(_busy ? "Laver filen…" : Label)
+        </button>
+    }
+    else
+    {
+        <button type="button" class="btn btn-primary btn-block" @onclick="ShareReady" data-testid="@($"{TestId}-ready")">
+            <span aria-hidden="true">📤</span> Filen er klar – tryk for at dele eller gemme
+        </button>
+    }
+    @if (Hint is not null)
+    {
+        <div class="hint">@Hint</div>
+    }
+</div>
+
+@code {
+    private bool _busy;
+    private (byte[] Bytes, string Name, string Mime)? _ready;
+
+    [Parameter, EditorRequired] public string Label { get; set; } = "";
+    [Parameter] public string Icon { get; set; } = "📊";
+    [Parameter] public string? Hint { get; set; }
+    [Parameter] public bool Primary { get; set; }
+    [Parameter] public string TestId { get; set; } = "export";
+
+    /// <summary>Creates the file. Keep it synchronous-fast; the share sheet needs the original tap.</summary>
+    [Parameter, EditorRequired] public Func<(byte[] Bytes, string Name, string Mime)> Create { get; set; } = default!;
+
+    protected override Task OnInitializedAsync() => Files.WarmUpAsync();
+
+    private async Task CreateAndShare()
+    {
+        _busy = true;
+        try
+        {
+            var file = Create();
+            await ShareAsync(file);
+        }
+        catch (Exception ex)
+        {
+            Toasts.Error("Filen kunne ikke laves.", [ex.Message]);
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private async Task ShareReady()
+    {
+        var file = _ready!.Value;
+        _ready = null;
+        await ShareAsync(file);
+    }
+
+    private async Task ShareAsync((byte[] Bytes, string Name, string Mime) file)
+    {
+        var (outcome, error) = await Files.ShareOrDownloadAsync(file.Bytes, file.Name, file.Mime, file.Name);
+        switch (outcome)
+        {
+            case ShareOutcome.Shared:
+                Toasts.Success($"“{file.Name}” er sendt videre.");
+                break;
+            case ShareOutcome.Downloaded:
+                Toasts.Success($"“{file.Name}” er hentet. Du finder den under Overførsler/Downloads.");
+                break;
+            case ShareOutcome.NeedsTap:
+                _ready = file;
+                break;
+            case ShareOutcome.Failed:
+                Toasts.Error("Filen kunne ikke deles eller hentes.", error is null ? null : [error]);
+                break;
+        }
+    }
+}

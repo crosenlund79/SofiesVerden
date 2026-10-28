@@ -1,0 +1,11 @@
+{
+  "name": "sofies-univers-e2e",
+  "private": true,
+  "description": "Browser tests for the published Sofies Univers app (Playwright + node:test).",
+  "scripts": {
+    "test": "node --test --test-concurrency=1 --test-timeout=180000"
+  },
+  "devDependencies": {
+    "playwright": "1.63.0"
+  }
+}

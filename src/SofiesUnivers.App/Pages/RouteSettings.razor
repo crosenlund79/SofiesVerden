@@ -1,0 +1,137 @@
+@page "/rute"
+@inject AppState State
+@inject ToastService Toasts
+@inject NavigationManager Nav
+
+<PageTitle>Rute til klinikken</PageTitle>
+<PageHeader Title="Rute til klinikken" BackHref="indstillinger" ShowSettings="false" />
+
+<form class="content" @onsubmit="SaveAsync" @onsubmit:preventDefault="true" novalidate>
+    <ErrorSummary Errors="_errors" />
+    <p class="small muted">Når du registrerer dagens første session, noteres en tur fra hjem til klinikken og tilbage. Ændringer her påvirker kun nye ture – tidligere ture beholder deres egne oplysninger.</p>
+
+    <section class="card">
+        <h2>Start (hjem)</h2>
+        <div class="field">
+            <label class="label" for="home-name">Navn</label>
+            <input id="home-name" class="input" value="@_homeName" @oninput="e => _homeName = e.Value?.ToString() ?? string.Empty" />
+        </div>
+        <div class="field" style="margin-bottom:0">
+            <label class="label" for="home-address">Adresse</label>
+            <input id="home-address" class="input" autocomplete="street-address" value="@_homeAddress" @oninput="e => _homeAddress = e.Value?.ToString() ?? string.Empty" />
+        </div>
+    </section>
+
+    <section class="card">
+        <h2>Klinikken</h2>
+        <div class="field">
+            <label class="label" for="clinic-name">Navn</label>
+            <input id="clinic-name" class="input" value="@_clinicName" @oninput="e => _clinicName = e.Value?.ToString() ?? string.Empty" />
+        </div>
+        <div class="field" style="margin-bottom:0">
+            <label class="label" for="clinic-address">Adresse</label>
+            <input id="clinic-address" class="input" value="@_clinicAddress" @oninput="e => _clinicAddress = e.Value?.ToString() ?? string.Empty" />
+        </div>
+    </section>
+
+    <section class="card">
+        <h2>Afstand</h2>
+        <div class="field">
+            <label class="label" for="km">Antal km tur/retur</label>
+            <MoneyInput Id="km" Value="_km" ValueChanged="v => _km = v" Suffix="km" Placeholder="fx 64" Invalid="@_errors.Any(e => e.Field == "km")" />
+            <div class="hint">Mål afstanden fx med en ruteplanlægger, og skriv hele turen frem og tilbage. Lad feltet stå tomt, indtil afstanden er kendt.</div>
+            <FieldError Errors="_errors" Field="km" />
+        </div>
+        <Switch Id="auto" Label="Registrér klinikkørsel automatisk" Hint="Ved dagens første session." Value="_auto" ValueChanged="v => _auto = v" />
+        <Switch Id="include" Label="Nye klinikture med i skatteoversigten" Hint="Kan ændres for hver tur. Din revisor vurderer fradraget." Value="_include" ValueChanged="v => _include = v" />
+    </section>
+
+    @if (_missing > 0 && State.Ledger.Data.Settings.ClinicRoute.RoundTripKm is { } savedKm)
+    {
+        <div class="notice warn mt">
+            @Dk.Count(_missing, "klinik-tur mangler", "klinik-ture mangler") antal km.
+            <button type="button" class="btn btn-secondary btn-block mt" @onclick="FillAsync">Udfyld dem med @Dk.Km(savedKm)</button>
+        </div>
+    }
+
+    <div class="sticky-actions">
+        <button type="submit" class="btn btn-primary btn-block btn-big" disabled="@_saving">Gem</button>
+    </div>
+</form>
+
+@code {
+    private string _homeName = "";
+    private string _homeAddress = "";
+    private string _clinicName = "";
+    private string _clinicAddress = "";
+    private decimal? _km;
+    private bool _auto;
+    private bool _include;
+    private bool _saving;
+    private int _missing;
+    private IReadOnlyList<ValidationError> _errors = [];
+
+    protected override void OnInitialized()
+    {
+        var s = State.Ledger.Data.Settings;
+        var home = s.FindLocation(s.ClinicRoute.FromLocationId);
+        var clinic = s.FindLocation(s.ClinicRoute.ToLocationId);
+        _homeName = home?.Name ?? "Hjem";
+        _homeAddress = home?.Address ?? "";
+        _clinicName = clinic?.Name ?? "Klinikken";
+        _clinicAddress = clinic?.Address ?? "";
+        _km = s.ClinicRoute.RoundTripKm;
+        _auto = s.ClinicRoute.AutoRegisterTrips;
+        _include = s.ClinicRoute.IncludeInTaxReportByDefault;
+        CountMissing();
+    }
+
+    private void CountMissing() => _missing = State.Ledger.Data.Trips.Count(t => t.IsClinicTrip && t.DistanceKm is null);
+
+    private async Task SaveAsync()
+    {
+        var s = State.Ledger.Data.Settings;
+        var locations = s.Locations.Select(l =>
+            l.Id == s.ClinicRoute.FromLocationId ? l with { Name = _homeName, Address = _homeAddress } :
+            l.Id == s.ClinicRoute.ToLocationId ? l with { Name = _clinicName, Address = _clinicAddress } : l).ToList();
+        var updated = s with
+        {
+            Locations = locations,
+            ClinicRoute = s.ClinicRoute with { RoundTripKm = _km, AutoRegisterTrips = _auto, IncludeInTaxReportByDefault = _include },
+        };
+
+        _saving = true;
+        try
+        {
+            var result = await State.Ledger.UpdateSettingsAsync(updated);
+            if (!result.Ok)
+            {
+                _errors = result.Errors;
+                return;
+            }
+
+            _errors = [];
+            CountMissing();
+            Toasts.Success("Ruten er gemt.");
+            if (_missing == 0)
+            {
+                Nav.NavigateTo("indstillinger");
+            }
+        }
+        catch (Exception ex)
+        {
+            Toasts.Error("Det kunne ikke gemmes.", [ex.Message]);
+        }
+        finally
+        {
+            _saving = false;
+        }
+    }
+
+    private async Task FillAsync()
+    {
+        var count = await State.Ledger.FillMissingClinicTripDistancesAsync();
+        CountMissing();
+        Toasts.Success($"{Dk.Count(count, "tur", "ture")} er udfyldt.");
+    }
+}

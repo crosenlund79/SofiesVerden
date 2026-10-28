@@ -999,3 +999,9 @@ button.list-item { width: 100%; font: inherit; text-align: left; cursor: pointer
     .topbar, .bottomnav, .toast-host, .sticky-actions { display: none !important; }
     body { background: #fff; }
 }
+
+/* ----------------------------------------------------------------- help */
+
+.help ol, .help ul { padding-left: 1.25rem; margin: 0 0 .5rem; }
+.help li + li { margin-top: .35rem; }
+.help .card h2 { font-size: 1.1rem; }

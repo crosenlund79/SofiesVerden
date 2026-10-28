@@ -1,0 +1,110 @@
+@* Step 1: make the backup. Step 2: share/save it (needs its own tap). Step 3: Sofie confirms it is saved. *@
+@using SofiesUnivers.Core.Backup
+@inject AppState State
+@inject BrowserFiles Files
+@inject ToastService Toasts
+
+<div class="stack" data-testid="backup-creator">
+    @if (_file is null)
+    {
+        <button class="btn btn-primary btn-block btn-big" disabled="@_busy" @onclick="CreateAsync" data-testid="make-backup">
+            <span aria-hidden="true">💾</span> @(_busy ? "Laver backup…" : CreateLabel)
+        </button>
+    }
+    else
+    {
+        <div class="notice ok" role="status">
+            <strong>Backuppen er lavet:</strong> @_file.FileName (@Dk.Number(_file.Bytes.Length / 1024m / 1024m) MB) –
+            @Dk.Count(_file.Info.Counts.Sessions, "session", "sessioner"), @Dk.Count(_file.Info.Counts.Expenses, "udgift", "udgifter"),
+            @Dk.Count(_file.Info.Counts.Receipts, "kvittering", "kvitteringer").
+            @foreach (var w in _file.Warnings)
+            {
+                <div class="error-text">@w</div>
+            }
+        </div>
+        <button class="btn btn-primary btn-block btn-big" @onclick="ShareAsync" data-testid="share-backup">
+            <span aria-hidden="true">📤</span> Gem eller send backup-filen
+        </button>
+        <p class="small muted">Vælg <strong>“Gem i Filer”</strong> og en mappe i iCloud Drive – eller send filen til dig selv på mail.</p>
+
+        @if (_shared && ShowConfirm)
+        {
+            <div class="card-soft">
+                <p style="margin-bottom:.6rem"><strong>Er filen gemt et sikkert sted?</strong><br />
+                    <span class="small">Telefonen kan ikke selv se, om det lykkedes. Bekræft kun, hvis du har set filen i Filer eller i din mail.</span></p>
+                <button class="btn btn-primary btn-block" @onclick="ConfirmAsync" data-testid="confirm-backup">Ja, backuppen er gemt</button>
+            </div>
+        }
+    }
+</div>
+
+@code {
+    private BackupFile? _file;
+    private bool _busy;
+    private bool _shared;
+
+    [Parameter] public string CreateLabel { get; set; } = "Lav backup nu";
+    [Parameter] public bool ShowConfirm { get; set; } = true;
+    [Parameter] public EventCallback OnConfirmed { get; set; }
+
+    protected override Task OnInitializedAsync() => Files.WarmUpAsync();
+
+    private async Task CreateAsync()
+    {
+        _busy = true;
+        try
+        {
+            var ledger = State.Ledger;
+            _file = await BackupWriter.BuildAsync(ledger.Data, ledger.GetAttachmentAsync, AppState.AppVersion, DateTimeOffset.UtcNow, ledger.Clock.Today);
+            await ledger.UpdateBackupStatusAsync(s => s with { LastGeneratedAt = DateTimeOffset.UtcNow });
+        }
+        catch (Exception ex)
+        {
+            Toasts.Error("Backuppen kunne ikke laves.", [ex.Message]);
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private async Task ShareAsync()
+    {
+        var (outcome, error) = await Files.ShareOrDownloadAsync(_file!.Bytes, _file.FileName, "application/zip", "Sofies Univers – backup");
+        switch (outcome)
+        {
+            case ShareOutcome.Shared:
+            case ShareOutcome.Downloaded:
+                _shared = true;
+                await State.Ledger.UpdateBackupStatusAsync(s => s with { LastSharedAt = DateTimeOffset.UtcNow });
+                if (outcome == ShareOutcome.Downloaded)
+                {
+                    Toasts.Info("Backup-filen er hentet. Flyt den gerne til et sikkert sted (fx OneDrive, iCloud eller en USB-nøgle).");
+                }
+
+                break;
+            case ShareOutcome.NeedsTap:
+                Toasts.Info("Tryk på knappen igen for at åbne delingsmenuen.");
+                break;
+            case ShareOutcome.Failed:
+                Toasts.Error("Filen kunne ikke deles eller hentes.", error is null ? null : [error]);
+                break;
+        }
+    }
+
+    private async Task ConfirmAsync()
+    {
+        var created = _file!.Info.CreatedAt;
+        try
+        {
+            // The backup covers the data as it was when the file was made.
+            await State.Ledger.UpdateBackupStatusAsync(s => s with { LastConfirmedAt = created, ReminderSnoozedUntil = null });
+            Toasts.Success("Tak! Backuppen er noteret som gemt. 🌟");
+            await OnConfirmed.InvokeAsync();
+        }
+        catch (Exception ex)
+        {
+            Toasts.Error("Det kunne ikke noteres.", [ex.Message]);
+        }
+    }
+}

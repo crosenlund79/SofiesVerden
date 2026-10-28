@@ -1,0 +1,417 @@
+@page "/session/ny"
+@page "/session/{Id:guid}"
+@inject AppState State
+@inject NavigationManager Nav
+@inject ToastService Toasts
+@inject ThemeService Theme
+@inject Prefs Prefs
+@inject BrowserApp Browser
+
+<PageTitle>@(IsNew ? "Ny session" : "Session")</PageTitle>
+<PageHeader Title="@(IsNew ? "Ny session" : "Ret session")" BackHref="@ReturnUrl" ShowSettings="false" />
+
+<NavigationLock OnBeforeInternalNavigation="ConfirmLeave" ConfirmExternalNavigation="IsDirty" />
+
+@if (_notFound)
+{
+    <div class="content">
+        <EmptyState Art="🔍" Title="Sessionen findes ikke længere">
+            <p><a href="sessioner">Til sessionerne</a></p>
+        </EmptyState>
+    </div>
+}
+else if (_loaded)
+{
+    <form class="content" @onsubmit="SaveAsync" @onsubmit:preventDefault="true" novalidate>
+        <ErrorSummary Errors="_errors" />
+
+        <div class="field">
+            <label class="label" for="date">Dato</label>
+            <input id="date" class="input" type="date" value="@_date.ToString("yyyy-MM-dd")" @onchange="OnDateChanged" />
+            <FieldError Errors="_errors" Field="date" />
+        </div>
+
+        <div class="field">
+            <span class="label" id="elements-label">Hvad indeholdt sessionen? <span class="opt">(vælg 1–3)</span></span>
+            <LookupPicker Kind="LookupKind.SessionElement" Selected="_elements" SelectedChanged="OnElementsChanged" Max="Rules.MaxElements" LabelId="elements-label" AddLabel="Ny type" />
+            <FieldError Errors="_errors" Field="elements" />
+        </div>
+
+        <div class="field">
+            <span class="label" id="duration-label">Varighed</span>
+            <DurationPicker Value="_duration" ValueChanged="OnDurationChanged" LabelId="duration-label" />
+            <FieldError Errors="_errors" Field="duration" />
+        </div>
+
+        <div class="field">
+            <label class="label" for="price">Pris</label>
+            <MoneyInput Id="price" Value="_price" ValueChanged="OnPriceChanged" Invalid="@_errors.Any(e => e.Field == "price")" Placeholder="fx 800" />
+            <FieldError Errors="_errors" Field="price" />
+        </div>
+
+        <section class="field card" aria-labelledby="pay-heading" style="padding:.9rem">
+            <h2 id="pay-heading" style="margin:0 0 .6rem">Betaling</h2>
+            @if (_payments.Count == 0)
+            {
+                <p class="small muted">Ingen betaling registreret – hele beløbet står som udestående.</p>
+            }
+            @for (var i = 0; i < _payments.Count; i++)
+            {
+                var index = i;
+                var row = _payments[index];
+                <div class="pay-row" data-testid="payment-row">
+                    <div>
+                        <label class="label small" for="@($"pay-amount-{index}")">Beløb</label>
+                        <MoneyInput Id="@($"pay-amount-{index}")" Value="row.Amount" ValueChanged="v => OnPaymentAmount(index, v)" Invalid="@_errors.Any(e => e.Field == $"payment{index}")" />
+                    </div>
+                    <div>
+                        <label class="label small" for="@($"pay-date-{index}")">Betalt d.</label>
+                        <input id="@($"pay-date-{index}")" class="input" type="date" value="@row.Date.ToString("yyyy-MM-dd")" @onchange="e => OnPaymentDate(index, e)" />
+                    </div>
+                    <div class="full">
+                        <span class="label small" id="@($"pay-method-{index}")">Betalt med</span>
+                        <div class="chips" role="group" aria-labelledby="@($"pay-method-{index}")">
+                            @foreach (var m in Methods(row.MethodId))
+                            {
+                                <button type="button" class="chip" aria-pressed="@(row.MethodId == m.Id ? "true" : "false")" @onclick="() => OnPaymentMethod(index, m.Id)">@m.Name</button>
+                            }
+                        </div>
+                    </div>
+                    <div class="full">
+                        <FieldError Errors="_errors" Field="@($"payment{index}")" />
+                    </div>
+                    <div class="full row between">
+                        <span class="small muted">@(row.Id is null ? "Ny betaling" : "Registreret betaling")</span>
+                        <button type="button" class="btn btn-ghost remove" @onclick="() => RemovePayment(index)">Fjern betaling</button>
+                    </div>
+                </div>
+            }
+            <FieldError Errors="_errors" Field="payments" />
+            <button type="button" class="btn btn-secondary btn-block" @onclick="AddPayment">+ @(_payments.Count == 0 ? "Registrér betaling" : "Tilføj endnu en betaling")</button>
+            <div class="balance-line" aria-live="polite">
+                <span>Betalt: <span class="num">@Dk.Money(Paid)</span></span>
+                @if (Outstanding > 0)
+                {
+                    <span class="badge warn">Udestående @Dk.Money(Outstanding)</span>
+                }
+                else if (_price is > 0)
+                {
+                    <span class="badge ok">Betalt fuldt ud</span>
+                }
+            </div>
+        </section>
+
+        <div class="field">
+            <label class="label" for="nickname">Klient <span class="opt">(valgfrit kaldenavn)</span></label>
+            <input id="nickname" class="input" type="text" list="nicknames" autocomplete="off" maxlength="@Names.MaxNicknameLength"
+                   placeholder="fx Kunde 042" value="@_nickname" @oninput="e => { _nickname = e.Value?.ToString() ?? string.Empty; }" />
+            <datalist id="nicknames">
+                @foreach (var n in _knownNicknames)
+                {
+                    <option value="@n"></option>
+                }
+            </datalist>
+            <div class="hint">Skriv kun et kaldenavn – ingen rigtige navne eller helbredsoplysninger.</div>
+            <FieldError Errors="_errors" Field="nickname" />
+        </div>
+
+        <div class="sticky-actions">
+            <button type="submit" class="btn btn-primary btn-block btn-big" disabled="@_saving" data-testid="save-session">
+                @(_saving ? "Gemmer…" : IsNew ? "Gem session" : "Gem ændringer")
+            </button>
+        </div>
+
+        @if (!IsNew)
+        {
+            <div class="mt center">
+                <button type="button" class="btn btn-danger" @onclick="() => _confirmDelete = true">Slet session</button>
+            </div>
+        }
+    </form>
+
+    <ConfirmDialog Visible="_confirmDelete" Title="Slet sessionen?" ConfirmText="Ja, slet sessionen" Danger="true" Busy="_saving"
+                   OnConfirm="DeleteAsync" OnCancel="() => _confirmDelete = false">
+        @if (_deletePreview is { } p)
+        {
+            <p>Sessionen d. @Dk.Date(p.Session.Date) til @Dk.Money(p.Session.Price) bliver slettet.</p>
+            @if (p.Payments.Count > 0)
+            {
+                <p><strong>@Dk.Count(p.Payments.Count, "betaling", "betalinger") på i alt @Dk.Money(p.Payments.Sum(x => x.Amount)) bliver også slettet.</strong></p>
+            }
+            @if (p.AutomaticTripRemoved is not null)
+            {
+                <p>Den automatiske kørsel til klinikken den dag fjernes også, fordi der ikke er andre sessioner den dag.</p>
+            }
+            <p class="small muted">Du kan fortryde lige bagefter.</p>
+        }
+    </ConfirmDialog>
+}
+
+@code {
+    private sealed class PaymentRow
+    {
+        public Guid? Id { get; init; }
+        public DateOnly Date { get; set; }
+        public decimal? Amount { get; set; }
+        public Guid MethodId { get; set; }
+    }
+
+    [Parameter] public Guid? Id { get; set; }
+    [SupplyParameterFromQuery(Name = "retur")] public string? Retur { get; set; }
+    [SupplyParameterFromQuery(Name = "dato")] public string? DateQuery { get; set; }
+
+    private bool _loaded;
+    private bool _notFound;
+    private bool _saving;
+    private bool _saved;
+    private bool _confirmDelete;
+    private bool _autoPayment;
+    private DateOnly _date;
+    private List<Guid> _elements = [];
+    private int _duration;
+    private decimal? _price;
+    private string _nickname = "";
+    private List<PaymentRow> _payments = [];
+    private Guid _defaultMethod;
+    private IReadOnlyList<ValidationError> _errors = [];
+    private IReadOnlyList<string> _knownNicknames = [];
+    private SessionDeletionPreview? _deletePreview;
+    private string _initialState = "";
+
+    private bool IsNew => Id is null;
+
+    private string ReturnUrl => Retur switch
+    {
+        "sessioner" or "udestaaende" or "historik" or "overblik" => Retur,
+        _ => IsNew ? "" : "sessioner",
+    };
+
+    private decimal Paid => _payments.Sum(p => p.Amount ?? 0m);
+
+    private decimal Outstanding => Balances.Outstanding(_price ?? 0m, Paid);
+
+    private bool IsDirty => _loaded && !_saved && Snapshot() != _initialState;
+
+    protected override async Task OnInitializedAsync()
+    {
+        var data = State.Ledger.Data;
+        _knownNicknames = data.Sessions.Select(s => s.ClientNickname).OfType<string>()
+            .Distinct(StringComparer.OrdinalIgnoreCase).Order(DanishComparer.Instance).ToList();
+        var methods = State.Ledger.ActiveLookups(LookupKind.PaymentMethod);
+        var lastMethod = await Prefs.LastPaymentMethodAsync();
+        _defaultMethod = methods.FirstOrDefault(m => m.Id == lastMethod)?.Id ?? methods.FirstOrDefault()?.Id ?? Guid.Empty;
+
+        if (Id is { } id)
+        {
+            var session = data.Sessions.FirstOrDefault(s => s.Id == id);
+            if (session is null)
+            {
+                _notFound = true;
+                return;
+            }
+
+            _date = session.Date;
+            _elements = session.ElementIds.ToList();
+            _duration = session.DurationMinutes;
+            _price = session.Price;
+            _nickname = session.ClientNickname ?? "";
+            _payments = data.Payments.Where(p => p.SessionId == id).OrderBy(p => p.Date).ThenBy(p => p.CreatedAt)
+                .Select(p => new PaymentRow { Id = p.Id, Date = p.Date, Amount = p.Amount, MethodId = p.MethodId }).ToList();
+            _deletePreview = State.Ledger.PreviewSessionDeletion(id);
+        }
+        else
+        {
+            _date = DateOnly.TryParse(DateQuery, out var d) ? d : State.Ledger.Clock.Today;
+            var active = State.Ledger.ActiveLookups(LookupKind.SessionElement).Select(e => e.Id).ToHashSet();
+            _elements = (await Prefs.LastElementsAsync()).Where(active.Contains).Take(Rules.MaxElements).ToList();
+            _duration = await Prefs.LastDurationAsync() ?? 120;
+            // A normal session is fully paid: propose one payment that follows the price.
+            _payments = [new PaymentRow { Date = _date, MethodId = _defaultMethod }];
+            _autoPayment = true;
+        }
+
+        _initialState = Snapshot();
+        _loaded = true;
+    }
+
+    private IEnumerable<LookupItem> Methods(Guid selected) =>
+        State.Ledger.ActiveLookups(LookupKind.PaymentMethod)
+            .Concat(State.Ledger.Data.PaymentMethods.Where(m => m.IsArchived && m.Id == selected));
+
+    private string Snapshot() =>
+        string.Join("|", _date, string.Join(",", _elements), _duration, _price, _nickname.Trim(),
+            string.Join(";", _payments.Select(p => $"{p.Id}:{p.Amount}:{p.Date}:{p.MethodId}")));
+
+    private void OnDateChanged(ChangeEventArgs e)
+    {
+        if (DateOnly.TryParse(e.Value?.ToString(), out var d))
+        {
+            // New, untouched payments follow the session date.
+            foreach (var p in _payments.Where(p => p.Id is null && p.Date == _date))
+            {
+                p.Date = d;
+            }
+
+            _date = d;
+        }
+    }
+
+    private void OnElementsChanged(IReadOnlyList<Guid> elements) => _elements = elements.ToList();
+
+    private void OnDurationChanged(int minutes) => _duration = minutes;
+
+    private void OnPriceChanged(decimal? price)
+    {
+        _price = price;
+        if (_autoPayment && _payments.Count == 1 && _payments[0].Id is null)
+        {
+            _payments[0].Amount = price;
+        }
+    }
+
+    private void OnPaymentAmount(int index, decimal? amount)
+    {
+        _payments[index].Amount = amount;
+        _autoPayment = false;
+    }
+
+    private void OnPaymentDate(int index, ChangeEventArgs e)
+    {
+        if (DateOnly.TryParse(e.Value?.ToString(), out var d))
+        {
+            _payments[index].Date = d;
+        }
+    }
+
+    private void OnPaymentMethod(int index, Guid method) => _payments[index].MethodId = method;
+
+    private void AddPayment()
+    {
+        _autoPayment = false;
+        var remaining = Balances.Outstanding(_price ?? 0m, Paid);
+        _payments.Add(new PaymentRow
+        {
+            Date = IsNew ? _date : State.Ledger.Clock.Today,
+            Amount = remaining > 0 ? remaining : null,
+            MethodId = _defaultMethod,
+        });
+    }
+
+    private void RemovePayment(int index)
+    {
+        _autoPayment = false;
+        _payments.RemoveAt(index);
+        _errors = [];
+    }
+
+    private async Task SaveAsync()
+    {
+        if (_saving)
+        {
+            return;
+        }
+
+        var errors = new List<ValidationError>();
+        if (_price is null)
+        {
+            errors.Add(new("price", "Skriv sessionens pris."));
+        }
+
+        for (var i = 0; i < _payments.Count; i++)
+        {
+            if (_payments[i].Amount is null)
+            {
+                errors.Add(new($"payment{i}", "Skriv betalingens beløb – eller fjern betalingen."));
+            }
+        }
+
+        var draft = new SessionDraft
+        {
+            Id = Id,
+            Date = _date,
+            ElementIds = _elements,
+            DurationMinutes = _duration,
+            Price = _price ?? 0m,
+            ClientNickname = _nickname,
+            Payments = _payments.Select(p => new PaymentDraft { Id = p.Id, Date = p.Date, Amount = p.Amount ?? 0m, MethodId = p.MethodId }).ToList(),
+        };
+
+        if (errors.Count == 0)
+        {
+            errors.AddRange(Rules.ValidateSession(draft, State.Ledger.Data));
+        }
+        else
+        {
+            errors.AddRange(Rules.ValidateSession(draft, State.Ledger.Data).Where(e => e.Field != "price" && !e.Field.StartsWith("payment", StringComparison.Ordinal)));
+        }
+
+        if (errors.Count > 0)
+        {
+            _errors = errors;
+            await Browser.ScrollToTopAsync();
+            return;
+        }
+
+        _saving = true;
+        try
+        {
+            var result = await State.Ledger.SaveSessionAsync(draft);
+            if (!result.Ok)
+            {
+                _errors = result.Errors;
+                await Browser.ScrollToTopAsync();
+                return;
+            }
+
+            _saved = true;
+            await Prefs.RememberSessionAsync(_elements, _duration, _payments.LastOrDefault()?.MethodId);
+            Toasts.Success((IsNew ? "Session gemt. " : "Ændringerne er gemt. ") + Theme.SavedMessage(), result.Notes);
+            Nav.NavigateTo(ReturnUrl);
+        }
+        catch (Exception ex)
+        {
+            Toasts.Error("Sessionen kunne ikke gemmes. Prøv igen.", [ex.Message]);
+        }
+        finally
+        {
+            _saving = false;
+        }
+    }
+
+    private async Task DeleteAsync()
+    {
+        _saving = true;
+        try
+        {
+            var deleted = await State.Ledger.DeleteSessionAsync(Id!.Value);
+            _saved = true;
+            _confirmDelete = false;
+            if (deleted is not null)
+            {
+                Toasts.WithUndo("Sessionen er slettet.", async () =>
+                {
+                    await State.Ledger.UndoDeleteAsync(deleted);
+                    Toasts.Success("Sessionen er hentet tilbage.");
+                }, deleted.Notes);
+            }
+
+            Nav.NavigateTo(ReturnUrl == "" ? "sessioner" : ReturnUrl);
+        }
+        catch (Exception ex)
+        {
+            Toasts.Error("Sessionen kunne ikke slettes.", [ex.Message]);
+        }
+        finally
+        {
+            _saving = false;
+        }
+    }
+
+    private async Task ConfirmLeave(LocationChangingContext context)
+    {
+        if (IsDirty && !await Browser.ConfirmAsync("Du har ændringer, der ikke er gemt. Vil du forlade siden uden at gemme?"))
+        {
+            context.PreventNavigation();
+        }
+    }
+}

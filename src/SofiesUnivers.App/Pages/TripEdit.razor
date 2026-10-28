@@ -1,0 +1,262 @@
+@page "/koersel/ny"
+@page "/koersel/{Id:guid}"
+@inject AppState State
+@inject NavigationManager Nav
+@inject ToastService Toasts
+@inject ThemeService Theme
+@inject BrowserApp Browser
+
+<PageTitle>@(IsNew ? "Registrér kørsel" : "Kørsel")</PageTitle>
+<PageHeader Title="@(IsNew ? "Registrér kørsel" : "Ret kørsel")" BackHref="@ReturnUrl" ShowSettings="false" />
+<NavigationLock OnBeforeInternalNavigation="ConfirmLeave" ConfirmExternalNavigation="IsDirty" />
+
+@if (_notFound)
+{
+    <div class="content"><EmptyState Art="🔍" Title="Kørslen findes ikke længere"><p><a href="koersel">Til kørsel</a></p></EmptyState></div>
+}
+else if (_loaded)
+{
+    <form class="content" @onsubmit="SaveAsync" @onsubmit:preventDefault="true" novalidate>
+        <ErrorSummary Errors="_errors" />
+        @if (_original?.Origin == TripOrigin.Automatic)
+        {
+            <div class="notice small">Turen blev registreret automatisk, fordi du havde en session den dag. Retter du den, bliver den din egen og fjernes ikke automatisk.</div>
+        }
+
+        <div class="field">
+            <label class="label" for="date">Dato</label>
+            <input id="date" class="input" type="date" value="@_date.ToString("yyyy-MM-dd")" @onchange="e => { if (DateOnly.TryParse(e.Value?.ToString(), out var d)) _date = d; }" />
+            <FieldError Errors="_errors" Field="date" />
+            @if (ExistingClinicTrip is { } other)
+            {
+                <div class="notice warn small" style="margin-top:.5rem">
+                    Der er allerede en tur til klinikken d. @Dk.Date(_date). <a href="@($"koersel/{other.Id}?retur=koersel")">Åbn den</a> i stedet, eller vælg “Anden rute”.
+                </div>
+            }
+        </div>
+
+        <div class="field">
+            <span class="label" id="purpose-label">Formål</span>
+            <div class="chips" role="group" aria-labelledby="purpose-label">
+                @foreach (var p in Purposes)
+                {
+                    <button type="button" class="chip" aria-pressed="@(Names.SameName(p, _purpose) ? "true" : "false")" @onclick="() => _purpose = p">@p</button>
+                }
+            </div>
+            <label class="label small mt" for="purpose">Eller skriv selv</label>
+            <input id="purpose" class="input" type="text" maxlength="@Names.MaxLookupLength" value="@_purpose" @oninput="e => _purpose = e.Value?.ToString() ?? string.Empty" />
+            <FieldError Errors="_errors" Field="purpose" />
+        </div>
+
+        <div class="field">
+            <span class="label" id="route-label">Rute</span>
+            <div class="chips" role="group" aria-labelledby="route-label">
+                <button type="button" class="chip" aria-pressed="@(_clinic ? "true" : "false")" @onclick="UseStandardRoute">Hjem ⇄ klinikken</button>
+                <button type="button" class="chip" aria-pressed="@(!_clinic ? "true" : "false")" @onclick="UseOtherRoute">Anden rute</button>
+            </div>
+        </div>
+
+        <div class="field">
+            <label class="label" for="from">Fra</label>
+            <input id="from" class="input" type="text" maxlength="150" value="@_from" @oninput="e => _from = e.Value?.ToString() ?? string.Empty" />
+            <FieldError Errors="_errors" Field="from" />
+        </div>
+        <div class="field">
+            <label class="label" for="to">Til</label>
+            <input id="to" class="input" type="text" maxlength="150" value="@_to" @oninput="e => _to = e.Value?.ToString() ?? string.Empty" />
+            <FieldError Errors="_errors" Field="to" />
+        </div>
+        <div class="field">
+            <label class="label" for="km">Antal km i alt <span class="opt">(tur/retur)</span></label>
+            <MoneyInput Id="km" Value="_km" ValueChanged="v => _km = v" Suffix="km" Placeholder="fx 64" Invalid="@_errors.Any(e => e.Field == "distance")" />
+            @if (_clinic && State.Ledger.Data.Settings.ClinicRoute.RoundTripKm is null)
+            {
+                <div class="hint">Standardafstanden er ikke angivet endnu. <a href="rute">Angiv den</a>, så udfyldes den automatisk fremover.</div>
+            }
+            <FieldError Errors="_errors" Field="distance" />
+        </div>
+
+        <div class="field card" style="padding:.75rem 1rem">
+            <Switch Id="tax" Label="Medtag i skatteoversigt" Hint="Din egen markering. Din revisor vurderer, om kørslen kan trækkes fra." Value="_include" ValueChanged="v => _include = v" />
+        </div>
+
+        <div class="sticky-actions">
+            <button type="submit" class="btn btn-primary btn-block btn-big" disabled="@_saving" data-testid="save-trip">@(_saving ? "Gemmer…" : IsNew ? "Gem kørsel" : "Gem ændringer")</button>
+        </div>
+
+        @if (!IsNew)
+        {
+            <div class="mt center">
+                <button type="button" class="btn btn-danger" @onclick="() => _confirmDelete = true">Slet kørsel</button>
+            </div>
+        }
+    </form>
+
+    <ConfirmDialog Visible="_confirmDelete" Title="Slet kørslen?" ConfirmText="Ja, slet kørslen" Danger="true" Busy="_saving"
+                   OnConfirm="DeleteAsync" OnCancel="() => _confirmDelete = false">
+        <p>Vil du hellere bare udelade turen fra skatteoversigten, så slå “Medtag i skatteoversigt” fra i stedet. Du kan fortryde en sletning lige bagefter.</p>
+    </ConfirmDialog>
+}
+
+@code {
+    [Parameter] public Guid? Id { get; set; }
+    [SupplyParameterFromQuery(Name = "retur")] public string? Retur { get; set; }
+
+    private bool _loaded;
+    private bool _notFound;
+    private bool _saving;
+    private bool _saved;
+    private bool _confirmDelete;
+    private Trip? _original;
+    private DateOnly _date;
+    private string _purpose = "";
+    private bool _clinic;
+    private string _from = "";
+    private string _to = "";
+    private decimal? _km;
+    private bool _include;
+    private IReadOnlyList<ValidationError> _errors = [];
+    private string _initialState = "";
+
+    private bool IsNew => Id is null;
+
+    private string ReturnUrl => Retur is "koersel" or "historik" or "overblik" ? Retur : IsNew ? "" : "koersel";
+
+    private bool IsDirty => _loaded && !_saved && Snapshot() != _initialState;
+
+    private Trip? ExistingClinicTrip => _clinic
+        ? State.Ledger.Data.Trips.FirstOrDefault(t => t.IsClinicTrip && t.Date == _date && t.Id != Id)
+        : null;
+
+    private IEnumerable<string> Purposes => DefaultData.TripPurposes
+        .Concat(State.Ledger.Data.Trips.Select(t => t.Purpose))
+        .DistinctBy(Names.Key)
+        .Take(10);
+
+    protected override void OnInitialized()
+    {
+        if (Id is { } id)
+        {
+            _original = State.Ledger.Data.Trips.FirstOrDefault(t => t.Id == id);
+            if (_original is null)
+            {
+                _notFound = true;
+                return;
+            }
+
+            _date = _original.Date;
+            _purpose = _original.Purpose;
+            _clinic = _original.IsClinicTrip;
+            _from = _original.FromLabel;
+            _to = _original.ToLabel;
+            _km = _original.DistanceKm;
+            _include = _original.IncludeInTaxReport;
+        }
+        else
+        {
+            _date = State.Ledger.Clock.Today;
+            _purpose = "Rengøring";
+            _include = true;
+            UseStandardRoute();
+        }
+
+        _initialState = Snapshot();
+        _loaded = true;
+    }
+
+    private string Snapshot() => string.Join("|", _date, _purpose, _clinic, _from, _to, _km, _include);
+
+    private void UseStandardRoute()
+    {
+        var settings = State.Ledger.Data.Settings;
+        _clinic = true;
+        _from = settings.FindLocation(settings.ClinicRoute.FromLocationId)?.Label ?? "Hjem";
+        _to = settings.FindLocation(settings.ClinicRoute.ToLocationId)?.Label ?? "Klinikken";
+        _km = settings.ClinicRoute.RoundTripKm ?? _km;
+    }
+
+    private void UseOtherRoute()
+    {
+        _clinic = false;
+        var settings = State.Ledger.Data.Settings;
+        if (_to == settings.FindLocation(settings.ClinicRoute.ToLocationId)?.Label)
+        {
+            _to = "";
+            _km = null;
+        }
+    }
+
+    private async Task SaveAsync()
+    {
+        if (_saving)
+        {
+            return;
+        }
+
+        var draft = new TripDraft
+        {
+            Id = Id, Date = _date, Purpose = _purpose, FromLabel = _from, ToLabel = _to,
+            DistanceKm = _km, IncludeInTaxReport = _include, IsClinicTrip = _clinic,
+        };
+        _saving = true;
+        try
+        {
+            var result = await State.Ledger.SaveTripAsync(draft);
+            if (!result.Ok)
+            {
+                _errors = result.Errors;
+                await Browser.ScrollToTopAsync();
+                return;
+            }
+
+            _saved = true;
+            Toasts.Success((IsNew ? "Kørslen er gemt. " : "Ændringerne er gemt. ") + Theme.SavedMessage());
+            Nav.NavigateTo(ReturnUrl);
+        }
+        catch (Exception ex)
+        {
+            Toasts.Error("Kørslen kunne ikke gemmes.", [ex.Message]);
+        }
+        finally
+        {
+            _saving = false;
+        }
+    }
+
+    private async Task DeleteAsync()
+    {
+        _saving = true;
+        try
+        {
+            var deleted = await State.Ledger.DeleteTripAsync(Id!.Value);
+            _saved = true;
+            _confirmDelete = false;
+            if (deleted is not null)
+            {
+                Toasts.WithUndo("Kørslen er slettet.", async () =>
+                {
+                    await State.Ledger.UndoDeleteAsync(deleted);
+                    Toasts.Success("Kørslen er hentet tilbage.");
+                });
+            }
+
+            Nav.NavigateTo(ReturnUrl == "" ? "koersel" : ReturnUrl);
+        }
+        catch (Exception ex)
+        {
+            Toasts.Error("Kørslen kunne ikke slettes.", [ex.Message]);
+        }
+        finally
+        {
+            _saving = false;
+        }
+    }
+
+    private async Task ConfirmLeave(LocationChangingContext context)
+    {
+        if (IsDirty && !await Browser.ConfirmAsync("Du har ændringer, der ikke er gemt. Vil du forlade siden uden at gemme?"))
+        {
+            context.PreventNavigation();
+        }
+    }
+}

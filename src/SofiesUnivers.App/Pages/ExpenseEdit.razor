@@ -1,0 +1,388 @@
+@page "/udgift/ny"
+@page "/udgift/{Id:guid}"
+@implements IAsyncDisposable
+@inject AppState State
+@inject NavigationManager Nav
+@inject ToastService Toasts
+@inject ThemeService Theme
+@inject BrowserApp Browser
+@inject BrowserFiles Files
+
+<PageTitle>@(IsNew ? "Ny udgift" : "Udgift")</PageTitle>
+<PageHeader Title="@(IsNew ? "Ny udgift" : "Ret udgift")" BackHref="@ReturnUrl" ShowSettings="false" />
+<NavigationLock OnBeforeInternalNavigation="ConfirmLeave" ConfirmExternalNavigation="IsDirty" />
+
+@if (_notFound)
+{
+    <div class="content"><EmptyState Art="🔍" Title="Udgiften findes ikke længere"><p><a href="udgifter">Til udgifterne</a></p></EmptyState></div>
+}
+else if (_loaded)
+{
+    <form class="content" @onsubmit="SaveAsync" @onsubmit:preventDefault="true" novalidate>
+        <ErrorSummary Errors="_errors" />
+
+        <div class="field">
+            <label class="label" for="date">Dato</label>
+            <input id="date" class="input" type="date" value="@_date.ToString("yyyy-MM-dd")" @onchange="e => { if (DateOnly.TryParse(e.Value?.ToString(), out var d)) _date = d; }" />
+            <FieldError Errors="_errors" Field="date" />
+        </div>
+
+        <div class="field">
+            <label class="label" for="amount">Beløb</label>
+            <MoneyInput Id="amount" Value="_amount" ValueChanged="v => _amount = v" Invalid="@_errors.Any(e => e.Field == "amount")" Placeholder="fx 249,95" />
+            <FieldError Errors="_errors" Field="amount" />
+        </div>
+
+        <div class="field">
+            <span class="label" id="category-label">Kategori</span>
+            <LookupPicker Kind="LookupKind.ExpenseCategory" Selected="_category" SelectedChanged="v => _category = v.ToList()" Max="1" LabelId="category-label" AddLabel="Ny kategori" />
+            <FieldError Errors="_errors" Field="category" />
+        </div>
+
+        <div class="field">
+            <label class="label" for="description">Beskrivelse <span class="opt">(valgfri)</span></label>
+            <textarea id="description" class="input" maxlength="@Names.MaxDescriptionLength" placeholder="fx Massageolie og håndklæder" @bind="_description" @bind:event="oninput"></textarea>
+            <FieldError Errors="_errors" Field="description" />
+        </div>
+
+        <section class="field" aria-labelledby="receipt-label">
+            <span class="label" id="receipt-label">Kvittering <span class="opt">(valgfri, ét billede eller én PDF)</span></span>
+            @if (HasReceipt)
+            {
+                <div class="receipt-preview">
+                    @if (_previewUrl is not null && ReceiptIsImage)
+                    {
+                        <img src="@_previewUrl" alt="Billede af kvitteringen" />
+                    }
+                    else
+                    {
+                        <span class="pdf" aria-hidden="true">@(ReceiptIsImage ? "🖼️" : "📄")</span>
+                    }
+                    <div class="grow">
+                        <div style="font-weight:650;overflow-wrap:anywhere">@ReceiptName</div>
+                        <div class="small muted">@ReceiptInfo</div>
+                        <div class="row wrap" style="margin-top:.4rem">
+                            <button type="button" class="btn btn-ghost" @onclick="OpenReceipt">Vis</button>
+                            <label class="btn btn-ghost file-label">
+                                Udskift
+                                <InputFile OnChange="OnFilePicked" accept="image/*,application/pdf" />
+                            </label>
+                            <button type="button" class="btn btn-ghost" @onclick="RemoveReceipt">Fjern</button>
+                        </div>
+                    </div>
+                </div>
+            }
+            else
+            {
+                <label class="btn btn-secondary btn-block file-label" data-testid="pick-receipt">
+                    <span aria-hidden="true">📷</span> Tag billede eller vælg fil
+                    <InputFile OnChange="OnFilePicked" accept="image/*,application/pdf" />
+                </label>
+                <div class="hint">Gem gerne kvitteringen – den kan være nødvendig som dokumentation.</div>
+            }
+            @if (_processing)
+            {
+                <div class="hint" role="status">Behandler billedet…</div>
+            }
+            <FieldError Errors="_errors" Field="attachment" />
+        </section>
+
+        <div class="sticky-actions">
+            <button type="submit" class="btn btn-primary btn-block btn-big" disabled="@(_saving || _processing)" data-testid="save-expense">
+                @(_saving ? "Gemmer…" : IsNew ? "Gem udgift" : "Gem ændringer")
+            </button>
+        </div>
+
+        @if (!IsNew)
+        {
+            <div class="mt center">
+                <button type="button" class="btn btn-danger" @onclick="() => _confirmDelete = true">Slet udgift</button>
+            </div>
+        }
+    </form>
+
+    <ConfirmDialog Visible="_confirmDelete" Title="Slet udgiften?" ConfirmText="Ja, slet udgiften" Danger="true" Busy="_saving"
+                   OnConfirm="DeleteAsync" OnCancel="() => _confirmDelete = false">
+        <p>Udgiften@(HasReceipt ? " og kvitteringen" : "") bliver slettet. Du kan fortryde lige bagefter.</p>
+    </ConfirmDialog>
+}
+
+@code {
+    [Parameter] public Guid? Id { get; set; }
+    [SupplyParameterFromQuery(Name = "retur")] public string? Retur { get; set; }
+
+    private bool _loaded;
+    private bool _notFound;
+    private bool _saving;
+    private bool _saved;
+    private bool _processing;
+    private bool _confirmDelete;
+    private DateOnly _date;
+    private decimal? _amount;
+    private List<Guid> _category = [];
+    private string? _description;
+    private AttachmentChange _attachmentChange = AttachmentChange.Keep;
+    private AttachmentInfo? _existing;
+    private byte[]? _newBytes;
+    private string? _newName;
+    private string? _previewUrl;
+    private IReadOnlyList<ValidationError> _errors = [];
+    private string _initialState = "";
+
+    private bool IsNew => Id is null;
+
+    private string ReturnUrl => Retur is "udgifter" or "historik" or "overblik" ? Retur : IsNew ? "" : "udgifter";
+
+    private bool HasReceipt => _newBytes is not null || (_existing is not null && _attachmentChange is AttachmentChange.KeepAttachment);
+
+    private bool ReceiptIsImage => _newBytes is not null
+        ? AttachmentRules.Detect(_newBytes)?.IsImage == true
+        : _existing?.ContentType.StartsWith("image/", StringComparison.Ordinal) == true;
+
+    private string ReceiptName => _newBytes is not null ? _newName ?? "kvittering" : _existing?.FileName ?? "";
+
+    private string ReceiptInfo => Dk.Number((_newBytes?.Length ?? _existing?.SizeBytes ?? 0) / 1024m) + " KB" + (_newBytes is not null ? " · ikke gemt endnu" : "");
+
+    private bool IsDirty => _loaded && !_saved && (Snapshot() != _initialState || _attachmentChange is not AttachmentChange.KeepAttachment);
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (Id is { } id)
+        {
+            var e = State.Ledger.Data.Expenses.FirstOrDefault(x => x.Id == id);
+            if (e is null)
+            {
+                _notFound = true;
+                return;
+            }
+
+            _date = e.Date;
+            _amount = e.Amount;
+            _category = [e.CategoryId];
+            _description = e.Description;
+            _existing = e.Attachment;
+            if (_existing is not null && _existing.ContentType.StartsWith("image/", StringComparison.Ordinal))
+            {
+                try
+                {
+                    var blob = await State.Ledger.GetAttachmentAsync(_existing.Id);
+                    if (blob is not null)
+                    {
+                        _previewUrl = await Files.CreateObjectUrlAsync(blob.Data, blob.ContentType);
+                    }
+                }
+                catch (Exception)
+                {
+                    // preview is a nicety
+                }
+            }
+        }
+        else
+        {
+            _date = State.Ledger.Clock.Today;
+        }
+
+        _initialState = Snapshot();
+        _loaded = true;
+    }
+
+    private string Snapshot() => string.Join("|", _date, _amount, string.Join(",", _category), _description?.Trim());
+
+    private async Task OnFilePicked(InputFileChangeEventArgs e)
+    {
+        _errors = [];
+        if (e.File.Size > AttachmentRules.MaxPickedBytes)
+        {
+            _errors = [new("attachment", $"Filen er for stor ({Dk.Number(e.File.Size / 1024m / 1024m)} MB). Vælg en fil under {AttachmentRules.MaxPickedBytes / 1024 / 1024} MB.")];
+            return;
+        }
+
+        _processing = true;
+        StateHasChanged();
+        try
+        {
+            using var stream = e.File.OpenReadStream(AttachmentRules.MaxPickedBytes);
+            using var ms = new MemoryStream();
+            await stream.CopyToAsync(ms);
+            var bytes = ms.ToArray();
+            var type = AttachmentRules.Detect(bytes);
+            if (type is null)
+            {
+                _errors = [new("attachment", "Filtypen understøttes ikke. Vælg et billede (JPG, PNG, HEIC) eller en PDF.")];
+                return;
+            }
+
+            var name = e.File.Name;
+            // Photos from the iPhone camera are large; a 2400 px JPEG keeps receipts readable at a fraction of the size.
+            if (type.IsImage && type.ContentType != "image/gif" && (bytes.Length > 1_500_000 || type.ContentType is "image/heic" or "image/png" or "image/webp"))
+            {
+                var compressed = await Files.CompressImageAsync(bytes, type.ContentType);
+                if (compressed is not null && AttachmentRules.Detect(compressed)?.ContentType == "image/jpeg")
+                {
+                    bytes = compressed;
+                    name = Path.GetFileNameWithoutExtension(name) + ".jpg";
+                }
+            }
+
+            if (AttachmentRules.Check(bytes) is { } problem)
+            {
+                _errors = [new("attachment", problem)];
+                return;
+            }
+
+            _newBytes = bytes;
+            _newName = name;
+            _attachmentChange = AttachmentChange.Replace(name, bytes);
+            await SetPreviewAsync(AttachmentRules.Detect(bytes)!.IsImage ? bytes : null, AttachmentRules.Detect(bytes)!.ContentType);
+        }
+        catch (Exception ex)
+        {
+            _errors = [new("attachment", "Filen kunne ikke læses af browseren. Prøv et andet billede eller en PDF. (" + ex.Message + ")")];
+        }
+        finally
+        {
+            _processing = false;
+        }
+    }
+
+    private async Task SetPreviewAsync(byte[]? imageBytes, string contentType)
+    {
+        if (_previewUrl is not null)
+        {
+            await Files.RevokeObjectUrlAsync(_previewUrl);
+            _previewUrl = null;
+        }
+
+        if (imageBytes is not null)
+        {
+            _previewUrl = await Files.CreateObjectUrlAsync(imageBytes, contentType);
+        }
+    }
+
+    private async Task RemoveReceipt()
+    {
+        _newBytes = null;
+        _newName = null;
+        _attachmentChange = _existing is null ? AttachmentChange.Keep : AttachmentChange.Remove;
+        await SetPreviewAsync(null, "");
+    }
+
+    private async Task OpenReceipt()
+    {
+        try
+        {
+            if (_newBytes is not null)
+            {
+                await Files.OpenAsync(_newBytes, AttachmentRules.Detect(_newBytes)!.ContentType);
+            }
+            else if (_existing is not null && await State.Ledger.GetAttachmentAsync(_existing.Id) is { } blob)
+            {
+                await Files.OpenAsync(blob.Data, blob.ContentType);
+            }
+        }
+        catch (Exception ex)
+        {
+            Toasts.Error("Kvitteringen kunne ikke vises.", [ex.Message]);
+        }
+    }
+
+    private async Task SaveAsync()
+    {
+        if (_saving)
+        {
+            return;
+        }
+
+        var errors = new List<ValidationError>();
+        if (_amount is null)
+        {
+            errors.Add(new("amount", "Skriv udgiftens beløb."));
+        }
+
+        var draft = new ExpenseDraft
+        {
+            Id = Id,
+            Date = _date,
+            Amount = _amount ?? 0m,
+            CategoryId = _category.FirstOrDefault(),
+            Description = _description,
+            Attachment = _attachmentChange,
+        };
+        errors.AddRange(Rules.ValidateExpense(draft, State.Ledger.Data).Where(e => !(e.Field == "amount" && _amount is null)));
+        if (errors.Count > 0)
+        {
+            _errors = errors;
+            await Browser.ScrollToTopAsync();
+            return;
+        }
+
+        _saving = true;
+        try
+        {
+            var result = await State.Ledger.SaveExpenseAsync(draft);
+            if (!result.Ok)
+            {
+                _errors = result.Errors;
+                await Browser.ScrollToTopAsync();
+                return;
+            }
+
+            _saved = true;
+            Toasts.Success((IsNew ? "Udgiften er gemt. " : "Ændringerne er gemt. ") + Theme.SavedMessage());
+            Nav.NavigateTo(ReturnUrl);
+        }
+        catch (Exception ex)
+        {
+            Toasts.Error("Udgiften kunne ikke gemmes. Måske er der ikke plads nok på telefonen.", [ex.Message]);
+        }
+        finally
+        {
+            _saving = false;
+        }
+    }
+
+    private async Task DeleteAsync()
+    {
+        _saving = true;
+        try
+        {
+            var deleted = await State.Ledger.DeleteExpenseAsync(Id!.Value);
+            _saved = true;
+            _confirmDelete = false;
+            if (deleted is not null)
+            {
+                Toasts.WithUndo("Udgiften er slettet.", async () =>
+                {
+                    await State.Ledger.UndoDeleteAsync(deleted);
+                    Toasts.Success("Udgiften er hentet tilbage.");
+                });
+            }
+
+            Nav.NavigateTo(ReturnUrl == "" ? "udgifter" : ReturnUrl);
+        }
+        catch (Exception ex)
+        {
+            Toasts.Error("Udgiften kunne ikke slettes.", [ex.Message]);
+        }
+        finally
+        {
+            _saving = false;
+        }
+    }
+
+    private async Task ConfirmLeave(LocationChangingContext context)
+    {
+        if (IsDirty && !await Browser.ConfirmAsync("Du har ændringer, der ikke er gemt. Vil du forlade siden uden at gemme?"))
+        {
+            context.PreventNavigation();
+        }
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        if (_previewUrl is not null)
+        {
+            await Files.RevokeObjectUrlAsync(_previewUrl);
+        }
+    }
+}
