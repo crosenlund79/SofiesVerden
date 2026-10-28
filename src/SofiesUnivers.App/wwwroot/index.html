@@ -14,6 +14,14 @@
     <meta name="apple-mobile-web-app-title" content="Sofies Univers" />
     <meta name="format-detection" content="telephone=no" />
     <script>
+        // Hosted under a sub path (GitHub Pages)? Normalise the casing of the path, so that
+        // /sofiesverden/ and /SofiesVerden/ both work with Blazor's base address.
+        (function () {
+            var base = document.querySelector('base').getAttribute('href'), path = location.pathname;
+            if (base === '/' || path.indexOf(base) === 0) return;
+            if ((path + '/').toLowerCase() === base.toLowerCase()) location.replace(base + location.search + location.hash);
+            else if (path.toLowerCase().indexOf(base.toLowerCase()) === 0) location.replace(base + path.slice(base.length) + location.search + location.hash);
+        })();
         // Apply the chosen personality before anything is drawn, so there is no flash of another theme.
         (function () {
             try {

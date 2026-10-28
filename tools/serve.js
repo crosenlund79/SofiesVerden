@@ -19,7 +19,9 @@ const types = {
 
 http.createServer((req, res) => {
   const url = decodeURIComponent(req.url.split('?')[0]);
-  if (!url.startsWith(base)) { res.writeHead(404); res.end('Not found'); return; }
+  // Like GitHub Pages: redirect /base to /base/ and accept any casing of the base path.
+  if (url.toLowerCase() + '/' === base.toLowerCase()) { res.writeHead(301, { Location: base }); res.end(); return; }
+  if (!url.toLowerCase().startsWith(base.toLowerCase())) { res.writeHead(404); res.end('Not found'); return; }
   let file = path.join(root, url.slice(base.length));
   if (!file.startsWith(root)) { res.writeHead(403); res.end(); return; }
   if (!fs.existsSync(file) || fs.statSync(file).isDirectory()) {

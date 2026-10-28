@@ -7,10 +7,10 @@
 <PageHeader Title="Typer og kategorier" BackHref="indstillinger" ShowSettings="false" />
 
 <div class="content">
-    <div class="filters" role="tablist" aria-label="Lister">
+    <div class="filters" role="group" aria-label="Vælg liste">
         @foreach (var (kind, label) in Kinds)
         {
-            <button class="chip" role="tab" aria-selected="@(_kind == kind ? "true" : "false")" aria-pressed="@(_kind == kind ? "true" : "false")" @onclick="() => Select(kind)">@label</button>
+            <button class="chip" aria-pressed="@(_kind == kind ? "true" : "false")" @onclick="() => Select(kind)">@label</button>
         }
     </div>
 

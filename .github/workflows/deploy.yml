@@ -1,0 +1,53 @@
+name: Deploy to GitHub Pages
+
+# Publishes the app (code and static files only – never any data) to
+# https://<owner>.github.io/<repository>/
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "10.0.x"
+
+      - name: Test
+        run: dotnet test SofiesUnivers.slnx -c Release
+
+      - name: Publish
+        run: dotnet publish src/SofiesUnivers.App -c Release -o artifacts/publish
+
+      - name: Prepare for GitHub Pages sub path
+        run: node tools/prepare-pages.js artifacts/publish/wwwroot "/${{ github.event.repository.name }}/"
+
+      - uses: actions/configure-pages@v5
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: artifacts/publish/wwwroot
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

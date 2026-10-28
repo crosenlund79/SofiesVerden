@@ -44,6 +44,20 @@ else if (_loaded)
         </div>
 
         <div class="field">
+            <label class="label" for="nickname">Klient <span class="opt">(valgfrit kaldenavn)</span></label>
+            <input id="nickname" class="input" type="text" list="nicknames" autocomplete="off" maxlength="@Names.MaxNicknameLength"
+                   placeholder="fx Kunde 042" value="@_nickname" @oninput="e => { _nickname = e.Value?.ToString() ?? string.Empty; }" />
+            <datalist id="nicknames">
+                @foreach (var n in _knownNicknames)
+                {
+                    <option value="@n"></option>
+                }
+            </datalist>
+            <div class="hint">Skriv kun et kaldenavn – ingen rigtige navne eller helbredsoplysninger.</div>
+            <FieldError Errors="_errors" Field="nickname" />
+        </div>
+
+        <div class="field">
             <label class="label" for="price">Pris</label>
             <MoneyInput Id="price" Value="_price" ValueChanged="OnPriceChanged" Invalid="@_errors.Any(e => e.Field == "price")" Placeholder="fx 800" />
             <FieldError Errors="_errors" Field="price" />
@@ -100,20 +114,6 @@ else if (_loaded)
                 }
             </div>
         </section>
-
-        <div class="field">
-            <label class="label" for="nickname">Klient <span class="opt">(valgfrit kaldenavn)</span></label>
-            <input id="nickname" class="input" type="text" list="nicknames" autocomplete="off" maxlength="@Names.MaxNicknameLength"
-                   placeholder="fx Kunde 042" value="@_nickname" @oninput="e => { _nickname = e.Value?.ToString() ?? string.Empty; }" />
-            <datalist id="nicknames">
-                @foreach (var n in _knownNicknames)
-                {
-                    <option value="@n"></option>
-                }
-            </datalist>
-            <div class="hint">Skriv kun et kaldenavn – ingen rigtige navne eller helbredsoplysninger.</div>
-            <FieldError Errors="_errors" Field="nickname" />
-        </div>
 
         <div class="sticky-actions">
             <button type="submit" class="btn btn-primary btn-block btn-big" disabled="@_saving" data-testid="save-session">

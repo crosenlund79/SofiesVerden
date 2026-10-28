@@ -5,7 +5,7 @@ using SofiesUnivers.Core.Storage;
 namespace SofiesUnivers.App.Services;
 
 /// <summary>Holds the loaded <see cref="Ledger"/> for the lifetime of the app.</summary>
-public sealed class AppState(IndexedDbStore store)
+public sealed class AppState(IndexedDbStore store, BrowserApp browser)
 {
     private Ledger? _ledger;
 
@@ -41,6 +41,7 @@ public sealed class AppState(IndexedDbStore store)
             _ledger = await Ledger.LoadAsync(store, SystemClock.Instance);
             _ledger.Changed += () => Changed?.Invoke();
             LoadError = null;
+            await RequestPersistenceWhenInstalledAsync();
         }
         catch (UnsupportedDataVersionException ex)
         {
@@ -50,6 +51,25 @@ public sealed class AppState(IndexedDbStore store)
         {
             LoadError = "Dine data kunne ikke indlæses. Prøv at lukke og åbne appen igen.";
             LoadErrorDetail = ex.InnerException?.Message ?? ex.Message;
+        }
+    }
+
+    /// <summary>
+    /// Asks the browser to keep data even under storage pressure. Only for the installed app, where
+    /// browsers decide silently (no permission dialog). A refusal is fine: backups are the real safety net.
+    /// </summary>
+    private async Task RequestPersistenceWhenInstalledAsync()
+    {
+        try
+        {
+            if (await browser.IsStandaloneAsync())
+            {
+                await store.RequestPersistenceAsync();
+            }
+        }
+        catch (Exception)
+        {
+            // best effort
         }
     }
 }
