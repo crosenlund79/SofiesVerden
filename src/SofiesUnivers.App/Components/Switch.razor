@@ -1,0 +1,23 @@
+<div class="switch-row">
+    <label for="@Id">
+        <span class="label" style="margin:0">@Label</span>
+        @if (Hint is not null)
+        {
+            <span class="hint" style="display:block">@Hint</span>
+        }
+    </label>
+    <span class="switch">
+        <input type="checkbox" role="switch" id="@Id" checked="@Value" aria-checked="@(Value ? "true" : "false")" @onchange="OnChange" />
+        <span class="track" aria-hidden="true"></span>
+    </span>
+</div>
+
+@code {
+    [Parameter, EditorRequired] public string Id { get; set; } = "";
+    [Parameter, EditorRequired] public string Label { get; set; } = "";
+    [Parameter] public string? Hint { get; set; }
+    [Parameter] public bool Value { get; set; }
+    [Parameter] public EventCallback<bool> ValueChanged { get; set; }
+
+    private Task OnChange(ChangeEventArgs e) => ValueChanged.InvokeAsync(e.Value is true || (e.Value as string) == "true" || (e.Value as string) == "on");
+}

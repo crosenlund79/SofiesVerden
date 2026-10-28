@@ -1,0 +1,57 @@
+@inject AppState State
+@inject ThemeService Theme
+@inject BrowserApp Browser
+
+@if (!_started)
+{
+    <div class="boot">
+        <div class="boot-orb" aria-hidden="true">✿</div>
+        <p class="boot-title">Sofies Univers</p>
+        <p class="boot-text">Et øjeblik – universet folder sig ud…</p>
+    </div>
+}
+else if (!State.IsReady)
+{
+    <main class="shell">
+        <div class="content">
+            <div class="card">
+                <h1>Hov – noget drillede</h1>
+                <p>@State.LoadError</p>
+                @if (State.LoadErrorDetail is not null)
+                {
+                    <p class="small muted">Teknisk detalje: @State.LoadErrorDetail</p>
+                }
+                <p class="small muted">Intet er slettet. Har du en backup, kan appen gendannes fra den, når fejlen er løst.</p>
+                <a class="btn btn-primary btn-block" href="">Prøv igen</a>
+            </div>
+        </div>
+    </main>
+}
+else
+{
+    <Router AppAssembly="@typeof(App).Assembly" NotFoundPage="typeof(Pages.NotFound)">
+        <Found Context="routeData">
+            <RouteView RouteData="@routeData" DefaultLayout="@typeof(MainLayout)" />
+            <FocusOnNavigate RouteData="@routeData" Selector="h1" />
+        </Found>
+    </Router>
+}
+
+@code {
+    private bool _started;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await Theme.InitializeAsync();
+        await State.InitializeAsync();
+        _started = true;
+        try
+        {
+            await Browser.WatchForUpdatesAsync();
+        }
+        catch (JSException)
+        {
+            // updates are optional
+        }
+    }
+}

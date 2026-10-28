@@ -1,0 +1,19 @@
+<header class="topbar">
+    @if (BackHref is not null)
+    {
+        <a class="icon-btn" href="@BackHref" aria-label="Tilbage"><span aria-hidden="true">‹</span><span class="lbl">Tilbage</span></a>
+    }
+    <h1 class="topbar-title" tabindex="-1">@Title</h1>
+    @ChildContent
+    @if (ShowSettings)
+    {
+        <a class="icon-btn" href="indstillinger" aria-label="Indstillinger og backup"><span aria-hidden="true" style="font-size:1.3rem">⚙️</span></a>
+    }
+</header>
+
+@code {
+    [Parameter, EditorRequired] public string Title { get; set; } = "";
+    [Parameter] public string? BackHref { get; set; }
+    [Parameter] public bool ShowSettings { get; set; } = true;
+    [Parameter] public RenderFragment? ChildContent { get; set; }
+}

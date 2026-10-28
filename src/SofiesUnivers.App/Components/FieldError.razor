@@ -1,0 +1,10 @@
+@foreach (var e in Errors.Where(e => e.Field == Field || (Prefix && e.Field.StartsWith(Field, StringComparison.Ordinal))))
+{
+    <div class="error-text" id="@($"err-{Field}")">@e.Message</div>
+}
+
+@code {
+    [Parameter] public IReadOnlyList<ValidationError> Errors { get; set; } = [];
+    [Parameter, EditorRequired] public string Field { get; set; } = "";
+    [Parameter] public bool Prefix { get; set; }
+}

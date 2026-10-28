@@ -1,0 +1,48 @@
+@implements IDisposable
+@inject ToastService Toasts
+
+<div class="toast-host" aria-live="polite" aria-atomic="true">
+    @foreach (var t in Toasts.Current)
+    {
+        <div class="toast @(t.Kind == ToastKind.Error ? "error" : "")" role="@(t.Kind == ToastKind.Error ? "alert" : "status")">
+            <div class="msg">
+                @t.Message
+                @if (t.Details.Count > 0)
+                {
+                    <ul>
+                        @foreach (var d in t.Details)
+                        {
+                            <li>@d</li>
+                        }
+                    </ul>
+                }
+            </div>
+            @if (t.Action is not null)
+            {
+                <button class="action" @onclick="() => RunAction(t)">@t.ActionLabel</button>
+            }
+            <button class="close" aria-label="Luk besked" @onclick="() => Toasts.Dismiss(t.Id)">✕</button>
+        </div>
+    }
+</div>
+
+@code {
+    protected override void OnInitialized() => Toasts.Changed += OnChanged;
+
+    private void OnChanged() => InvokeAsync(StateHasChanged);
+
+    private async Task RunAction(Toast t)
+    {
+        Toasts.Dismiss(t.Id);
+        try
+        {
+            await t.Action!();
+        }
+        catch (Exception ex)
+        {
+            Toasts.Error("Det lykkedes ikke: " + ex.Message);
+        }
+    }
+
+    public void Dispose() => Toasts.Changed -= OnChanged;
+}

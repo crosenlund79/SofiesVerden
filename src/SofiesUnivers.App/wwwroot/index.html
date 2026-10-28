@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html lang="da" data-theme="boheme">
+
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <title>Sofies Univers</title>
+    <base href="/" />
+    <meta name="description" content="Sofies Univers – sessioner, betalinger, udgifter og kørsel." />
+    <meta name="theme-color" content="#b5452f" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+    <meta name="apple-mobile-web-app-title" content="Sofies Univers" />
+    <meta name="format-detection" content="telephone=no" />
+    <script>
+        // Apply the chosen personality before anything is drawn, so there is no flash of another theme.
+        (function () {
+            try {
+                var t = localStorage.getItem('sofies-univers.theme');
+                if (t) document.documentElement.setAttribute('data-theme', t);
+            } catch (e) { }
+        })();
+    </script>
+    <link rel="preload" id="webassembly" />
+    <link rel="stylesheet" href="css/app.css" />
+    <link rel="icon" type="image/png" href="icons/favicon-32.png" />
+    <link rel="apple-touch-icon" sizes="180x180" href="icons/apple-touch-icon.png" />
+    <link href="SofiesUnivers.App.styles.css" rel="stylesheet" />
+    <link href="manifest.webmanifest" rel="manifest" />
+    <script type="importmap"></script>
+</head>
+
+<body>
+    <div id="app">
+        <div class="boot">
+            <div class="boot-orb" aria-hidden="true">✿</div>
+            <p class="boot-title">Sofies Univers</p>
+            <p class="boot-text">Et øjeblik – universet folder sig ud…</p>
+        </div>
+    </div>
+
+    <div id="blazor-error-ui" role="alert">
+        Der skete en uventet fejl. Dine gemte data er ikke påvirket.
+        <a href="" class="reload">Genindlæs appen</a>
+        <button type="button" class="dismiss" aria-label="Luk">✕</button>
+    </div>
+    <script src="_framework/blazor.webassembly#[.{fingerprint}].js"></script>
+    <script>
+        if ('serviceWorker' in navigator) {
+            navigator.serviceWorker.register('service-worker.js', { updateViaCache: 'none' }).catch(function () { });
+        }
+        document.querySelector('#blazor-error-ui .dismiss').addEventListener('click', function () {
+            document.getElementById('blazor-error-ui').style.display = 'none';
+        });
+    </script>
+</body>
+
+</html>

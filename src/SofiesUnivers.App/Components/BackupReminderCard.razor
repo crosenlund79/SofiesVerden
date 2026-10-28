@@ -1,0 +1,40 @@
+@inject AppState State
+
+@if (Show)
+{
+    var status = State.Ledger.BackupStatus;
+    <section class="card-soft mt" aria-labelledby="backup-reminder">
+        <h2 id="backup-reminder" style="margin-top:0">💾 Tid til en backup?</h2>
+        <p class="small">
+            Du har nye registreringer siden sidste backup.
+            @if (status.LastConfirmedAt is { } c)
+            {
+                <span>Seneste bekræftede backup: <strong>@Dk.Date(DateOnly.FromDateTime(c.LocalDateTime))</strong>.</span>
+            }
+            else
+            {
+                <span>Du har endnu ikke bekræftet en backup.</span>
+            }
+        </p>
+        <div class="row wrap">
+            <a class="btn btn-primary" href="backup">Lav backup</a>
+            <button class="btn btn-ghost" @onclick="Snooze">Påmind mig senere</button>
+        </div>
+    </section>
+}
+
+@code {
+    private bool Show => BackupReminder.ShouldShow(State.Ledger.BackupStatus, State.Ledger.Data.HasBusinessRecords, DateTimeOffset.UtcNow);
+
+    private async Task Snooze()
+    {
+        try
+        {
+            await State.Ledger.UpdateBackupStatusAsync(s => s with { ReminderSnoozedUntil = DateTimeOffset.UtcNow + BackupReminder.Snooze });
+        }
+        catch (Exception)
+        {
+            // not important enough to bother Sofie with
+        }
+    }
+}

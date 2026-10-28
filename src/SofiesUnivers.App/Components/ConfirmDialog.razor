@@ -1,0 +1,29 @@
+@if (Visible)
+{
+    <div class="dialog-backdrop" @onclick="Cancel">
+        <div class="dialog" role="alertdialog" aria-modal="true" aria-labelledby="dlg-title" @onclick:stopPropagation="true">
+            <h2 id="dlg-title">@Title</h2>
+            @ChildContent
+            <div class="actions">
+                <button class="btn btn-block @(Danger ? "btn-danger-solid" : "btn-primary")" disabled="@Busy" @onclick="Confirm">@ConfirmText</button>
+                <button class="btn btn-block btn-secondary" disabled="@Busy" @onclick="Cancel">@CancelText</button>
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    [Parameter] public bool Visible { get; set; }
+    [Parameter] public string Title { get; set; } = "Er du sikker?";
+    [Parameter] public string ConfirmText { get; set; } = "Ja";
+    [Parameter] public string CancelText { get; set; } = "Fortryd";
+    [Parameter] public bool Danger { get; set; }
+    [Parameter] public bool Busy { get; set; }
+    [Parameter] public RenderFragment? ChildContent { get; set; }
+    [Parameter] public EventCallback OnConfirm { get; set; }
+    [Parameter] public EventCallback OnCancel { get; set; }
+
+    private Task Confirm() => OnConfirm.InvokeAsync();
+
+    private Task Cancel() => Busy ? Task.CompletedTask : OnCancel.InvokeAsync();
+}

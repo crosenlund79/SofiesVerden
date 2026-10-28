@@ -1,0 +1,31 @@
+# Build output
+bin/
+obj/
+artifacts/
+publish/
+TestResults/
+*.trx
+coverage*/
+
+# IDEs
+.vs/
+.vscode/
+.idea/
+*.user
+*.suo
+*.swp
+.DS_Store
+
+# Node (browser tests)
+node_modules/
+tests/e2e/test-output/
+playwright-report/
+
+# Never commit Sofie's real data, exports or backups
+*.zip
+Sofie-Backup-*
+Sofies-Regnskab*.xlsx
+Regnskabsoversigt-*.xlsx
+*.local.json
+appsettings.Development.json
+.env

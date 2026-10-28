@@ -1,0 +1,223 @@
+@page "/systemtjek"
+@using System.Diagnostics
+@using SofiesUnivers.Core.Backup
+@using SofiesUnivers.Core.Excel
+@inject AppState State
+@inject IndexedDbStore Store
+@inject BrowserFiles Files
+@inject BrowserApp Browser
+@inject IJSRuntime JS
+
+<PageTitle>Systemtjek</PageTitle>
+<PageHeader Title="Systemtjek" BackHref="indstillinger" ShowSettings="false" />
+
+<div class="content">
+    <p class="muted small">
+        Tjekker, at denne browser kan alt det, appen har brug for: gemme data, lave Excel- og ZIP-filer, dele filer og læse dem igen.
+        Testen ændrer ikke dine data.
+    </p>
+
+    <button class="btn btn-primary btn-block" disabled="@_running" @onclick="RunAsync" data-testid="run-checks">
+        @(_running ? "Tjekker…" : "Kør systemtjek")
+    </button>
+
+    @if (_results.Count > 0)
+    {
+        <ul class="list mt" data-testid="check-results">
+            @foreach (var r in _results)
+            {
+                <li class="list-item" data-check="@r.Key" data-ok="@(r.Ok ? "true" : "false")">
+                    <span class="ico" aria-hidden="true">@(r.Ok ? "✅" : "❌")</span>
+                    <span class="main">
+                        <span class="title">@r.Name</span>
+                        <span class="sub" style="display:block">@r.Detail</span>
+                    </span>
+                    <span class="end"><span class="badge @(r.Ok ? "ok" : "warn")">@(r.Ok ? "OK" : "Fejl")</span></span>
+                </li>
+            }
+        </ul>
+    }
+
+    @if (_workbook is not null && _zip is not null)
+    {
+        <section class="card mt">
+            <h2>Del eller hent testfiler</h2>
+            <p class="small muted">Tryk for at prøve delingsarket (iPhone) eller download (computer). Filerne indeholder dine nuværende data.</p>
+            <div class="stack">
+                <button class="btn btn-secondary btn-block" @onclick="ShareWorkbook" data-testid="share-xlsx">Del test-regneark (.xlsx)</button>
+                <button class="btn btn-secondary btn-block" @onclick="ShareZip" data-testid="share-zip">Del test-backup (.zip)</button>
+            </div>
+            @if (_shareResult is not null)
+            {
+                <p class="small mt" data-testid="share-result">Resultat: @_shareResult</p>
+            }
+        </section>
+    }
+
+    <section class="card mt">
+        <h2>Læs en fil</h2>
+        <p class="small muted">Vælg en backup (.zip) eller et regneark (.xlsx) for at teste, at appen kan læse den. Intet bliver gendannet.</p>
+        <label class="btn btn-secondary btn-block file-label">
+            Vælg fil…
+            <InputFile OnChange="ReadFile" accept=".zip,.xlsx,application/zip,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" data-testid="import-file" />
+        </label>
+        @if (_importResult is not null)
+        {
+            <p class="small mt" data-testid="import-result">@_importResult</p>
+        }
+    </section>
+
+    <section class="card mt">
+        <h2>Om denne enhed</h2>
+        <dl class="kv small">
+            <dt>App-version</dt><dd>@AppState.AppVersion</dd>
+            <dt>Installeret på hjemmeskærm</dt><dd>@(_standalone ? "Ja" : "Nej")</dd>
+            <dt>Deling af filer</dt><dd>@(_canShare ? "Understøttet" : "Ikke understøttet (download bruges)")</dd>
+            <dt>Vedvarende lager</dt><dd>@(_storage.Persisted switch { true => "Ja", false => "Nej", _ => "Ukendt" })</dd>
+            <dt>Brugt lager</dt><dd>@(_storage.Usage is { } u ? $"{Dk.Number(u / 1024m / 1024m)} MB" : "Ukendt")</dd>
+        </dl>
+        <p class="small muted mt" style="overflow-wrap:anywhere">@_userAgent</p>
+    </section>
+</div>
+
+@code {
+    private sealed record CheckResult(string Key, string Name, bool Ok, string Detail);
+
+    private readonly List<CheckResult> _results = [];
+    private bool _running;
+    private byte[]? _workbook;
+    private BackupFile? _zip;
+    private string? _shareResult;
+    private string? _importResult;
+    private bool _standalone;
+    private bool _canShare;
+    private StorageInfo _storage = new();
+    private string _userAgent = "";
+
+    protected override async Task OnInitializedAsync()
+    {
+        try
+        {
+            _standalone = await Browser.IsStandaloneAsync();
+            _canShare = await Files.CanShareFilesAsync();
+            _storage = await Store.GetStorageInfoAsync();
+            _userAgent = await Browser.UserAgentAsync();
+        }
+        catch (JSException)
+        {
+        }
+    }
+
+    private async Task RunAsync()
+    {
+        _running = true;
+        _results.Clear();
+        StateHasChanged();
+        await Task.Yield();
+
+        await Check("indexeddb", "Gemme og læse data (IndexedDB)", async () =>
+        {
+            var module = await JS.InvokeAsync<IJSObjectReference>("import", "./js/storage.js");
+            var ok = await module.InvokeAsync<bool>("selfTest");
+            return (ok, ok ? "Skrev og læste 256 KB i en testdatabase." : "Data kom ikke korrekt tilbage.");
+        });
+
+        await Check("sha256", "Kontrolsummer (SHA-256)", () =>
+        {
+            var hash = Hashing.Sha256Hex(System.Text.Encoding.UTF8.GetBytes("abc"));
+            var ok = hash == "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad";
+            return Task.FromResult((ok, ok ? "Beregnet korrekt." : $"Forkert resultat: {hash}"));
+        });
+
+        await Check("xlsx", "Lave Excel-regneark", () =>
+        {
+            _workbook = PrivateWorkbook.Build(State.Ledger.Data, DateTimeOffset.UtcNow);
+            var back = WorkbookImporter.Import(_workbook);
+            var ok = back.Ok;
+            return Task.FromResult((ok, ok ? $"{Dk.Number(_workbook.Length / 1024m)} KB, og regnearket kunne læses igen." : string.Join(" ", back.Errors)));
+        });
+
+        await Check("zip", "Lave og læse ZIP-backup", async () =>
+        {
+            _zip = await BackupWriter.BuildAsync(State.Ledger.Data, State.Ledger.GetAttachmentAsync, AppState.AppVersion, DateTimeOffset.UtcNow, State.Ledger.Clock.Today);
+            var read = BackupReader.Read(_zip.Bytes);
+            var ok = read.Ok && read.Data!.Sessions.Count == State.Ledger.Data.Sessions.Count;
+            return (ok, ok ? $"{Dk.Number(_zip.Bytes.Length / 1024m)} KB med {read.Attachments.Count} kvitteringer – gyldig." : string.Join(" ", read.Errors));
+        });
+
+        await Check("share", "Dele filer", async () =>
+        {
+            _canShare = await Files.CanShareFilesAsync();
+            return (true, _canShare ? "Delingsarket kan bruges." : "Delingsark understøttes ikke her – filer hentes i stedet.");
+        });
+
+        await Check("persist", "Vedvarende lager", async () =>
+        {
+            var granted = await Store.RequestPersistenceAsync();
+            _storage = await Store.GetStorageInfoAsync();
+            return (true, granted || _storage.Persisted == true
+                ? "Browseren har lovet at passe på data."
+                : "Browseren har ikke givet garanti. Husk derfor backup – og føj appen til hjemmeskærmen.");
+        });
+
+        _running = false;
+    }
+
+    private async Task Check(string key, string name, Func<Task<(bool Ok, string Detail)>> test)
+    {
+        var sw = Stopwatch.StartNew();
+        try
+        {
+            var (ok, detail) = await test();
+            _results.Add(new CheckResult(key, name, ok, $"{detail} ({sw.ElapsedMilliseconds} ms)"));
+        }
+        catch (Exception ex)
+        {
+            _results.Add(new CheckResult(key, name, false, ex.GetType().Name + ": " + ex.Message));
+        }
+
+        StateHasChanged();
+        await Task.Yield();
+    }
+
+    private async Task ShareWorkbook()
+    {
+        var (outcome, error) = await Files.ShareOrDownloadAsync(_workbook!, "Systemtjek.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "Systemtjek");
+        _shareResult = outcome + (error is null ? "" : ": " + error);
+    }
+
+    private async Task ShareZip()
+    {
+        var (outcome, error) = await Files.ShareOrDownloadAsync(_zip!.Bytes, "Systemtjek.zip", "application/zip", "Systemtjek");
+        _shareResult = outcome + (error is null ? "" : ": " + error);
+    }
+
+    private async Task ReadFile(InputFileChangeEventArgs e)
+    {
+        try
+        {
+            using var stream = e.File.OpenReadStream(BackupReader.MaxTotalBytes);
+            using var ms = new MemoryStream();
+            await stream.CopyToAsync(ms);
+            var bytes = ms.ToArray();
+            if (e.File.Name.EndsWith(".xlsx", StringComparison.OrdinalIgnoreCase))
+            {
+                var result = WorkbookImporter.Import(bytes);
+                _importResult = result.Ok
+                    ? $"Regnearket kan læses: {result.Data!.Sessions.Count} sessioner, {result.Data.Expenses.Count} udgifter."
+                    : "Regnearket kan ikke bruges: " + string.Join(" ", result.Errors);
+            }
+            else
+            {
+                var result = BackupReader.Read(bytes);
+                _importResult = result.Ok
+                    ? $"Backuppen er gyldig: {result.Data!.Sessions.Count} sessioner, {result.Attachments.Count} kvitteringer ({Dk.Number(bytes.Length / 1024m)} KB)."
+                    : "Backuppen kan ikke bruges: " + string.Join(" ", result.Errors);
+            }
+        }
+        catch (Exception ex)
+        {
+            _importResult = "Filen kunne ikke læses: " + ex.Message;
+        }
+    }
+}

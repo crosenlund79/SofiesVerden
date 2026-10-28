@@ -1,0 +1,27 @@
+@implements IDisposable
+@inject ThemeService Theme
+
+<section class="card theme-picker" aria-labelledby="theme-heading">
+    <h2 id="theme-heading">Hvem er du i dag, Sofie?</h2>
+    <div class="theme-options" role="group" aria-labelledby="theme-heading">
+        @foreach (var p in Personalities.All)
+        {
+            <button type="button" class="theme-option" aria-pressed="@(Theme.Current.Id == p.Id ? "true" : "false")"
+                    aria-label="@p.Name" data-theme-id="@p.Id" @onclick="() => Theme.SetAsync(p.Id)">
+                <span class="dot dot-@p.Id" aria-hidden="true">@p.Emoji</span>
+                <span>@ShortName(p)</span>
+            </button>
+        }
+    </div>
+    <p class="theme-name" aria-live="polite">@Theme.Current.Emoji @Theme.Current.Name · @Theme.Current.Colors</p>
+</section>
+
+@code {
+    protected override void OnInitialized() => Theme.Changed += OnChanged;
+
+    private void OnChanged() => InvokeAsync(StateHasChanged);
+
+    private static string ShortName(Personality p) => p.Name.Split(' ').Last() switch { var s => Dk.Capitalize(s) };
+
+    public void Dispose() => Theme.Changed -= OnChanged;
+}

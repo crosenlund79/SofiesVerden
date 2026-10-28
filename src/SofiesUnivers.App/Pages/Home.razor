@@ -1,0 +1,109 @@
+@page "/"
+@implements IDisposable
+@inject AppState State
+@inject ThemeService Theme
+@inject BrowserApp Browser
+
+<PageTitle>Sofies Univers</PageTitle>
+<PageHeader Title="Sofies Univers" />
+
+<div class="content">
+    <section class="hero" aria-label="Velkommen">
+        <p class="greeting">@Theme.Greeting(Today)</p>
+        <p class="date">@Dk.Capitalize(Dk.DateLong(Today))</p>
+        <a class="btn btn-new" href="session/ny"><span aria-hidden="true">＋</span> Ny session</a>
+    </section>
+
+    <div class="quick-grid">
+        <a class="quick" href="udgift/ny"><span class="ico" aria-hidden="true">🧾</span>Ny udgift</a>
+        <a class="quick" href="koersel/ny"><span class="ico" aria-hidden="true">🚗</span>Registrér kørsel</a>
+        <a class="quick" href="udestaaende">
+            <span class="ico" aria-hidden="true">⏳</span>
+            <span>Udestående<br /><span class="sub">@(_outstanding.Count == 0 ? "Alt er betalt" : $"{Dk.Count(_outstanding.Count, "session", "sessioner")} · {Dk.Money(_outstanding.Sum(o => o.Outstanding))}")</span></span>
+        </a>
+        <a class="quick" href="overblik"><span class="ico" aria-hidden="true">📊</span><span>Årsoversigt<br /><span class="sub">@Today.Year</span></span></a>
+    </div>
+
+    <BackupReminderCard />
+
+    @if (_showInstallTip)
+    {
+        <div class="notice mt" role="note">
+            <strong>Tip:</strong> Føj appen til hjemmeskærmen (Del-knappen <span aria-hidden="true">⬆️</span> → “Føj til hjemmeskærm”). Så åbner den som en rigtig app, og Safari passer bedre på dine data.
+            <a href="hjaelp">Læs mere</a>
+        </div>
+    }
+
+    @if (State.Ledger.Data.Settings.ClinicRoute.RoundTripKm is null)
+    {
+        <div class="notice warn mt" role="note">
+            Afstanden til klinikken er ikke angivet endnu, så kørsler mangler antal km.
+            <a href="rute">Angiv km</a>
+        </div>
+    }
+
+    @if (_recent.Count == 0)
+    {
+        <div class="card mt">
+            <EmptyState Art="🌱" Title="Velkommen til dit univers">
+                <p>Her samler du sessioner, betalinger, udgifter og kørsel. Tryk på <strong>Ny session</strong> for at komme i gang.</p>
+            </EmptyState>
+        </div>
+    }
+    else
+    {
+        <h2 class="group-title"><span>Seneste sessioner</span><a href="sessioner" class="small">Se alle</a></h2>
+        <ul class="list">
+            @foreach (var s in _recent)
+            {
+                <li><SessionListItem Session="s" /></li>
+            }
+        </ul>
+    }
+
+    <div class="mt">
+        <ThemePicker />
+    </div>
+</div>
+
+@code {
+    private IReadOnlyList<OutstandingSession> _outstanding = [];
+    private IReadOnlyList<Session> _recent = [];
+    private bool _showInstallTip;
+
+    private DateOnly Today => State.Ledger.Clock.Today;
+
+    protected override async Task OnInitializedAsync()
+    {
+        Refresh();
+        State.Changed += OnChanged;
+        Theme.Changed += OnChanged;
+        try
+        {
+            _showInstallTip = await Browser.IsIosAsync() && !await Browser.IsStandaloneAsync();
+        }
+        catch (JSException)
+        {
+            _showInstallTip = false;
+        }
+    }
+
+    private void Refresh()
+    {
+        var data = State.Ledger.Data;
+        _outstanding = ReportCalculator.OutstandingSessions(data);
+        _recent = data.Sessions.OrderByDescending(s => s.Date).ThenByDescending(s => s.CreatedAt).Take(3).ToList();
+    }
+
+    private void OnChanged()
+    {
+        Refresh();
+        InvokeAsync(StateHasChanged);
+    }
+
+    public void Dispose()
+    {
+        State.Changed -= OnChanged;
+        Theme.Changed -= OnChanged;
+    }
+}

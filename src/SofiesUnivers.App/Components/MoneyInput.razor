@@ -1,0 +1,50 @@
+@* A Danish-friendly amount field: numeric keyboard, accepts "800", "800,50", "1.250". *@
+<div class="input-money">
+    <input id="@Id" class="input @(Invalid || _unparsable ? "invalid" : "")" type="text" inputmode="decimal" autocomplete="off"
+           enterkeyhint="done" placeholder="@Placeholder" value="@_text" aria-invalid="@(Invalid || _unparsable ? "true" : "false")"
+           aria-describedby="@DescribedBy" @oninput="OnInput" @onblur="OnBlur" />
+    <span class="suffix" aria-hidden="true">@Suffix</span>
+</div>
+@if (_unparsable)
+{
+    <div class="error-text">Skriv et beløb, fx 800 eller 800,50.</div>
+}
+
+@code {
+    private string _text = "";
+    private decimal? _lastValue;
+    private bool _unparsable;
+
+    [Parameter, EditorRequired] public string Id { get; set; } = "";
+    [Parameter] public decimal? Value { get; set; }
+    [Parameter] public EventCallback<decimal?> ValueChanged { get; set; }
+    [Parameter] public bool Invalid { get; set; }
+    [Parameter] public string Suffix { get; set; } = "kr.";
+    [Parameter] public string Placeholder { get; set; } = "0";
+    [Parameter] public string? DescribedBy { get; set; }
+
+    protected override void OnParametersSet()
+    {
+        // Only overwrite what Sofie is typing when the value was changed from outside.
+        if (Value != _lastValue)
+        {
+            _lastValue = Value;
+            _text = Value is { } v ? Dk.InputAmount(v) : "";
+            _unparsable = false;
+        }
+    }
+
+    private async Task OnInput(ChangeEventArgs e)
+    {
+        _text = e.Value?.ToString() ?? "";
+        decimal? parsed = Dk.TryParseAmount(_text, out var v) ? v : null;
+        _unparsable = false;
+        _lastValue = parsed;
+        await ValueChanged.InvokeAsync(parsed);
+    }
+
+    private void OnBlur()
+    {
+        _unparsable = !string.IsNullOrWhiteSpace(_text) && !Dk.TryParseAmount(_text, out _);
+    }
+}

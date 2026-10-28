@@ -1,0 +1,11 @@
+<div class="empty">
+    <span class="art" aria-hidden="true">@Art</span>
+    <div class="title">@Title</div>
+    @ChildContent
+</div>
+
+@code {
+    [Parameter] public string Art { get; set; } = "🌙";
+    [Parameter, EditorRequired] public string Title { get; set; } = "";
+    [Parameter] public RenderFragment? ChildContent { get; set; }
+}

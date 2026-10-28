@@ -1,0 +1,73 @@
+<div class="chips" role="group" aria-labelledby="@LabelId">
+    @foreach (var (minutes, label) in Quick)
+    {
+        <button type="button" class="chip" aria-pressed="@(!_custom && Value == minutes ? "true" : "false")" @onclick="() => Pick(minutes)">@label</button>
+    }
+    <button type="button" class="chip" aria-pressed="@(_custom ? "true" : "false")" @onclick="StartCustom">Anden varighed</button>
+</div>
+@if (_custom)
+{
+    <div class="row" style="margin-top:.6rem">
+        <div class="grow">
+            <label class="label small" for="dur-h">Timer</label>
+            <input id="dur-h" class="input" type="number" inputmode="numeric" min="0" max="24" step="1" value="@_hours" @oninput="OnHours" />
+        </div>
+        <div class="grow">
+            <label class="label small" for="dur-m">Minutter</label>
+            <input id="dur-m" class="input" type="number" inputmode="numeric" min="0" max="59" step="5" value="@_minutes" @oninput="OnMinutes" />
+        </div>
+    </div>
+    @if (Value > 0)
+    {
+        <div class="hint">I alt: @Dk.Duration(Value)</div>
+    }
+}
+
+@code {
+    private static readonly (int Minutes, string Label)[] Quick = [(120, "2 timer"), (150, "2½ timer"), (180, "3 timer")];
+    private bool _custom;
+    private bool _initialized;
+    private int _hours;
+    private int _minutes;
+
+    [Parameter] public int Value { get; set; }
+    [Parameter] public EventCallback<int> ValueChanged { get; set; }
+    [Parameter] public string LabelId { get; set; } = "";
+
+    protected override void OnParametersSet()
+    {
+        if (!_initialized)
+        {
+            _initialized = true;
+            _custom = Value > 0 && Quick.All(q => q.Minutes != Value);
+            _hours = Value / 60;
+            _minutes = Value % 60;
+        }
+    }
+
+    private Task Pick(int minutes)
+    {
+        _custom = false;
+        return ValueChanged.InvokeAsync(minutes);
+    }
+
+    private Task StartCustom()
+    {
+        _custom = true;
+        _hours = Value / 60;
+        _minutes = Value % 60;
+        return Task.CompletedTask;
+    }
+
+    private Task OnHours(ChangeEventArgs e)
+    {
+        _hours = int.TryParse(e.Value?.ToString(), out var h) ? Math.Clamp(h, 0, 24) : 0;
+        return ValueChanged.InvokeAsync(_hours * 60 + _minutes);
+    }
+
+    private Task OnMinutes(ChangeEventArgs e)
+    {
+        _minutes = int.TryParse(e.Value?.ToString(), out var m) ? Math.Clamp(m, 0, 59) : 0;
+        return ValueChanged.InvokeAsync(_hours * 60 + _minutes);
+    }
+}

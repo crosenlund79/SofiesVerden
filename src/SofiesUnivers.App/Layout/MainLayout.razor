@@ -1,0 +1,24 @@
+@inherits LayoutComponentBase
+@implements IDisposable
+@inject BrowserApp Browser
+
+<div class="shell">
+    @if (Browser.IsUpdateAvailable)
+    {
+        <div class="update-banner" role="status">
+            <span>✨ En ny version af appen er klar.</span>
+            <button class="btn btn-secondary" @onclick="Browser.ApplyUpdateAsync">Opdatér</button>
+        </div>
+    }
+    @Body
+</div>
+<BottomNav />
+<ToastHost />
+
+@code {
+    protected override void OnInitialized() => Browser.UpdateAvailable += OnUpdate;
+
+    private void OnUpdate() => InvokeAsync(StateHasChanged);
+
+    public void Dispose() => Browser.UpdateAvailable -= OnUpdate;
+}

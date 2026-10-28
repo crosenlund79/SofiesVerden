@@ -1,0 +1,30 @@
+@inject AppState State
+
+<a class="list-item" href="@($"session/{Session.Id}")">
+    <span class="ico" aria-hidden="true">✨</span>
+    <span class="main">
+        <span class="title">@Elements</span>
+        <span class="sub" style="display:block">
+            @Dk.DateWithDay(Session.Date) · @Dk.Duration(Session.DurationMinutes)@(Session.ClientNickname is null ? "" : " · " + Session.ClientNickname)
+        </span>
+    </span>
+    <span class="end">
+        <span class="amount">@Dk.Money(Session.Price)</span><br />
+        @if (Outstanding > 0)
+        {
+            <span class="badge warn">Mangler @Dk.Money(Outstanding)</span>
+        }
+        else
+        {
+            <span class="badge ok">Betalt</span>
+        }
+    </span>
+</a>
+
+@code {
+    [Parameter, EditorRequired] public Session Session { get; set; } = default!;
+
+    private string Elements => string.Join(" + ", Session.ElementIds.Select(id => State.Ledger.Data.LookupName(LookupKind.SessionElement, id)));
+
+    private decimal Outstanding => State.Ledger.Data.OutstandingFor(Session);
+}

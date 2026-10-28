@@ -1,0 +1,19 @@
+{
+  "name": "Sofies Univers",
+  "short_name": "Sofies Univers",
+  "description": "Sessioner, betalinger, udgifter og kørsel – med farver.",
+  "id": "./",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "lang": "da",
+  "background_color": "#fff4ec",
+  "theme_color": "#b5452f",
+  "prefer_related_applications": false,
+  "icons": [
+    { "src": "icons/icon-192.png", "type": "image/png", "sizes": "192x192" },
+    { "src": "icons/icon-512.png", "type": "image/png", "sizes": "512x512" },
+    { "src": "icons/icon-maskable-512.png", "type": "image/png", "sizes": "512x512", "purpose": "maskable" }
+  ]
+}

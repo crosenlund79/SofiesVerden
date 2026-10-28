@@ -1,0 +1,9 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/SofiesUnivers.App/SofiesUnivers.App.csproj" />
+    <Project Path="src/SofiesUnivers.Core/SofiesUnivers.Core.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/SofiesUnivers.Tests/SofiesUnivers.Tests.csproj" />
+  </Folder>
+</Solution>

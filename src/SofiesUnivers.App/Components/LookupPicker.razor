@@ -1,0 +1,164 @@
+@* Chips for reusable values (session elements, expense categories) with "+ Tilføj" for new names. *@
+@inject AppState State
+@inject ToastService Toasts
+
+<div class="chips" role="group" aria-labelledby="@LabelId">
+    @foreach (var item in VisibleItems)
+    {
+        var selected = Selected.Contains(item.Id);
+        var disabled = !selected && Max > 1 && Selected.Count >= Max;
+        <button type="button" class="chip" aria-pressed="@(selected ? "true" : "false")" disabled="@disabled" @onclick="() => Toggle(item.Id)">@item.Name</button>
+    }
+    @if (!_adding)
+    {
+        <button type="button" class="chip add" @onclick="StartAdding">+ @AddLabel</button>
+    }
+</div>
+
+@if (_adding)
+{
+    <div class="combo-results">
+        <label class="visually-hidden" for="@($"{LabelId}-new")">@AddLabel</label>
+        <div class="row">
+            <input id="@($"{LabelId}-new")" class="input grow" type="text" autocomplete="off" placeholder="Skriv navnet…" maxlength="60"
+                   value="@_query" @oninput="e => _query = e.Value?.ToString() ?? string.Empty" @onkeydown="OnKey" />
+            <button type="button" class="btn btn-ghost" @onclick="CancelAdding">Fortryd</button>
+        </div>
+        @if (Names.Clean(_query) is { } clean)
+        {
+            var match = AllItems.FirstOrDefault(i => Names.SameName(i.Name, clean));
+            <div class="chips" style="margin-top:.5rem">
+                @if (match is not null && !match.IsArchived)
+                {
+                    <button type="button" class="chip" @onclick="() => SelectExisting(match.Id)">Vælg “@match.Name”</button>
+                }
+                else
+                {
+                    <button type="button" class="chip add" disabled="@_busy" @onclick="Add">+ Tilføj “@clean”</button>
+                }
+            </div>
+        }
+    </div>
+}
+
+@code {
+    private bool _adding;
+    private bool _busy;
+    private string _query = "";
+
+    [Parameter, EditorRequired] public LookupKind Kind { get; set; }
+    [Parameter, EditorRequired] public IReadOnlyList<Guid> Selected { get; set; } = [];
+    [Parameter] public EventCallback<IReadOnlyList<Guid>> SelectedChanged { get; set; }
+
+    /// <summary>1 = single choice (tapping another value switches), otherwise a maximum count.</summary>
+    [Parameter] public int Max { get; set; } = 1;
+    [Parameter] public string LabelId { get; set; } = "";
+    [Parameter] public string AddLabel { get; set; } = "Ny";
+
+    private IReadOnlyList<LookupItem> AllItems => State.Ledger.Data.Lookups(Kind);
+
+    private IEnumerable<LookupItem> VisibleItems
+    {
+        get
+        {
+            var ledger = State.Ledger;
+            // Active values, most used first; plus archived values that are selected on an old record.
+            return ledger.ActiveLookups(Kind)
+                .OrderByDescending(i => ledger.UsageCount(Kind, i.Id))
+                .ThenBy(i => i.SortOrder)
+                .Concat(AllItems.Where(i => i.IsArchived && Selected.Contains(i.Id)));
+        }
+    }
+
+    private async Task Toggle(Guid id)
+    {
+        List<Guid> next;
+        if (Selected.Contains(id))
+        {
+            next = Selected.Where(x => x != id).ToList();
+        }
+        else if (Max == 1)
+        {
+            next = [id];
+        }
+        else if (Selected.Count < Max)
+        {
+            next = Selected.Append(id).ToList();
+        }
+        else
+        {
+            return;
+        }
+
+        await SelectedChanged.InvokeAsync(next);
+    }
+
+    private void StartAdding()
+    {
+        _adding = true;
+        _query = "";
+    }
+
+    private void CancelAdding()
+    {
+        _adding = false;
+        _query = "";
+    }
+
+    private async Task OnKey(KeyboardEventArgs e)
+    {
+        if (e.Key == "Enter" && Names.Clean(_query) is not null)
+        {
+            await Add();
+        }
+    }
+
+    private async Task SelectExisting(Guid id)
+    {
+        _adding = false;
+        if (!Selected.Contains(id))
+        {
+            await Toggle(id);
+        }
+    }
+
+    private async Task Add()
+    {
+        if (_busy)
+        {
+            return;
+        }
+
+        _busy = true;
+        try
+        {
+            var result = await State.Ledger.AddLookupAsync(Kind, _query);
+            if (!result.Ok)
+            {
+                Toasts.Error(result.Errors[0].Message);
+                return;
+            }
+
+            _adding = false;
+            _query = "";
+            if (Max > 1 && Selected.Count >= Max && !Selected.Contains(result.Value!.Id))
+            {
+                Toasts.Info($"“{result.Value.Name}” er tilføjet. Fravælg et andet element for at vælge den.");
+                return;
+            }
+
+            if (!Selected.Contains(result.Value!.Id))
+            {
+                await Toggle(result.Value.Id);
+            }
+        }
+        catch (Exception ex)
+        {
+            Toasts.Error("Kunne ikke tilføje: " + ex.Message);
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+}
